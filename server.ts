@@ -459,17 +459,32 @@ function startServer() {
       };
     });
 
-    // Deduplicate bulk payload by id to prevent "ON CONFLICT DO UPDATE command cannot affect row a second time" DB error
+    // deduplicate and format the entries
     const uniqueHospitalEntriesMap = new Map();
     formattedEntries.forEach((entry: any) => {
       uniqueHospitalEntriesMap.set(entry.id, entry);
     });
     const deduplicatedEntries = Array.from(uniqueHospitalEntriesMap.values());
 
-    const { data, error } = await supabase
-      .from('hospital_entries')
-      .upsert(deduplicatedEntries, { onConflict: 'id' })
-      .select();
+    let data: any[] | null = [];
+    let error: any = null;
+    const CHUNK_SIZE = 200; // Safe chunking to prevent PostgreSQL parameter limit issues
+
+    for (let i = 0; i < deduplicatedEntries.length; i += CHUNK_SIZE) {
+      const chunk = deduplicatedEntries.slice(i, i + CHUNK_SIZE);
+      const { data: chunkData, error: chunkError } = await supabase
+        .from('hospital_entries')
+        .upsert(chunk, { onConflict: 'id' })
+        .select();
+      
+      if (chunkError) {
+        error = chunkError;
+        break;
+      }
+      if (chunkData) {
+        data = data.concat(chunkData);
+      }
+    }
     
     if (error) {
       console.error('Hospital Bulk upload error (DB):', error.message || error);
@@ -574,17 +589,32 @@ function startServer() {
       };
     });
 
-    // Deduplicate bulk payload by id to prevent "ON CONFLICT DO UPDATE command cannot affect row a second time" DB error
+    // deduplicate and format the entries
     const uniqueDairyEntriesMap = new Map();
     formattedEntries.forEach((entry: any) => {
       uniqueDairyEntriesMap.set(entry.id, entry);
     });
     const deduplicatedEntries = Array.from(uniqueDairyEntriesMap.values());
 
-    const { data, error } = await supabase
-      .from('dairy_entries')
-      .upsert(deduplicatedEntries, { onConflict: 'id' })
-      .select();
+    let data: any[] | null = [];
+    let error: any = null;
+    const CHUNK_SIZE = 200; // Safe chunking to prevent PostgreSQL parameter limit issues
+
+    for (let i = 0; i < deduplicatedEntries.length; i += CHUNK_SIZE) {
+      const chunk = deduplicatedEntries.slice(i, i + CHUNK_SIZE);
+      const { data: chunkData, error: chunkError } = await supabase
+        .from('dairy_entries')
+        .upsert(chunk, { onConflict: 'id' })
+        .select();
+      
+      if (chunkError) {
+        error = chunkError;
+        break;
+      }
+      if (chunkData) {
+        data = data.concat(chunkData);
+      }
+    }
     
     if (error) {
       console.error('Dairy Bulk upload error (DB):', error.message || error);

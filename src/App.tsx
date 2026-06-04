@@ -1513,45 +1513,6 @@ export default function App() {
     }
   };
 
-  const ageGroupDistribution = React.useMemo(() => {
-    const entries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
-    const groups = [
-      { name: '0-18', count: 0 },
-      { name: '19-35', count: 0 },
-      { name: '36-50', count: 0 },
-      { name: '50+', count: 0 },
-    ];
-    entries.forEach(e => {
-      if (!e.dob) return;
-      try {
-        const birthDate = parseISO(e.dob);
-        const age = differenceInYears(new Date(), birthDate);
-        if (age <= 18) groups[0].count++;
-        else if (age <= 35) groups[1].count++;
-        else if (age <= 50) groups[2].count++;
-        else groups[3].count++;
-      } catch (err) {
-        // Skip invalid dates
-      }
-    });
-    return groups;
-  }, [hospitalEntries, dairyEntries, activeModule]);
-
-  const locationDistribution = React.useMemo(() => {
-    const entries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
-    const counts: Record<string, number> = {};
-    entries.forEach(e => {
-      const v = e.village || 'Unknown';
-      counts[v] = (counts[v] || 0) + 1;
-    });
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const top4 = sorted.slice(0, 4).map(([name, value]) => ({ name, value }));
-    const othersCount = sorted.slice(4).reduce((acc, curr) => acc + curr[1], 0);
-    if (othersCount > 0) {
-      top4.push({ name: 'Others', value: othersCount });
-    }
-    return top4.length > 0 ? top4 : [{ name: 'No Data', value: 1 }];
-  }, [hospitalEntries, dairyEntries, activeModule]);
 
   const [modalEntryType, setModalEntryType] = useState<string>('');
 
@@ -2175,6 +2136,46 @@ export default function App() {
     return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
   });
 
+  const ageGroupDistribution = React.useMemo(() => {
+    const entries = filteredReportEntries;
+    const groups = [
+      { name: '0-18', count: 0 },
+      { name: '19-35', count: 0 },
+      { name: '36-50', count: 0 },
+      { name: '50+', count: 0 },
+    ];
+    entries.forEach(e => {
+      if (!e.dob) return;
+      try {
+        const birthDate = parseISO(e.dob);
+        const age = differenceInYears(new Date(), birthDate);
+        if (age <= 18) groups[0].count++;
+        else if (age <= 35) groups[1].count++;
+        else if (age <= 50) groups[2].count++;
+        else groups[3].count++;
+      } catch (err) {
+        // Skip invalid dates
+      }
+    });
+    return groups;
+  }, [filteredReportEntries]);
+
+  const locationDistribution = React.useMemo(() => {
+    const entries = filteredReportEntries;
+    const counts: Record<string, number> = {};
+    entries.forEach(e => {
+      const v = e.village || 'Unknown';
+      counts[v] = (counts[v] || 0) + 1;
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const top4 = sorted.slice(0, 4).map(([name, value]) => ({ name, value }));
+    const othersCount = sorted.slice(4).reduce((acc, curr) => acc + curr[1], 0);
+    if (othersCount > 0) {
+      top4.push({ name: 'Others', value: othersCount });
+    }
+    return top4.length > 0 ? top4 : [{ name: 'No Data', value: 1 }];
+  }, [filteredReportEntries]);
+
   const isBirthdayToday = (dob?: string) => {
     if (!dob || dob.length < 5) return false;
     try {
@@ -2594,7 +2595,7 @@ export default function App() {
                 <Card className="p-6">
                   <h3 className="font-bold text-zinc-900 mb-6">Combined Growth Analysis</h3>
                   <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height={320}>
                       <BarChart data={[
                         { name: 'Hospital', count: hospitalEntries.length, fill: '#3b82f6' },
                         { name: 'Dairy', count: dairyEntries.length, fill: '#10b981' },
@@ -2695,7 +2696,7 @@ export default function App() {
                 <Card className="lg:col-span-2 p-6">
                   <h3 className="font-bold text-zinc-900 mb-6">Registration Trends</h3>
                   <div className="h-80">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height={320}>
                       <BarChart data={[
                         { name: 'Mon', count: 4 },
                         { name: 'Tue', count: 7 },
@@ -3995,7 +3996,7 @@ export default function App() {
               <Card className="p-6">
                 <h3 className="font-bold text-zinc-900 mb-6">Location Distribution</h3>
                 <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={256}>
                     <PieChart>
                       <Pie
                         data={locationDistribution}
@@ -4021,7 +4022,7 @@ export default function App() {
               <Card className="p-6">
                 <h3 className="font-bold text-zinc-900 mb-6">Age Group Analysis</h3>
                 <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={256}>
                     <BarChart data={ageGroupDistribution}>
                       <XAxis dataKey="name" axisLine={false} tickLine={false} />
                       <Tooltip />
