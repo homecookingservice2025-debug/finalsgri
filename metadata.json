@@ -1,0 +1,7 @@
+{
+  "name": "Remix: Final: Shri Krishna Management System",
+  "description": "Integrated management and WhatsApp automation system for Shri Krishna Mission Hospital and Shri Krishna Sugar \u0026 Dairy.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
