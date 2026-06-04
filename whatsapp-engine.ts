@@ -4,8 +4,16 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim();
-const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "").trim();
+const cleanEnvVar = (val: string | undefined): string => {
+  if (!val) return "";
+  let clean = val.trim();
+  if (clean.startsWith('"') && clean.endsWith('"')) clean = clean.slice(1, -1);
+  if (clean.startsWith("'") && clean.endsWith("'")) clean = clean.slice(1, -1);
+  return clean.trim();
+};
+
+const supabaseUrl = cleanEnvVar(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+const supabaseKey = cleanEnvVar(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY);
 
 export const isSupabaseConfigured = (): boolean => {
   if (!supabaseUrl || !supabaseKey) return false;
@@ -15,7 +23,13 @@ export const isSupabaseConfigured = (): boolean => {
 };
 
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as any).url);
+  const method = init?.method || "GET";
+  
+  console.log(`[WHATSAPP-ENGINE OUTBOUND] -> ${method} ${urlStr}`);
+
   if (!isSupabaseConfigured()) {
+    console.warn(`[WHATSAPP-ENGINE CONFIG EXCEPTION] Supabase not configured. Blocking call to: ${urlStr}`);
     return new Response(JSON.stringify({
       code: "SUPABASE_NOT_CONFIGURED",
       message: "Supabase is not configured yet. Operating in local JSON filesystem/in-memory fallback mode.",
@@ -26,9 +40,22 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     });
   }
   try {
-    return await fetch(input, init);
+    const startTime = Date.now();
+    const response = await fetch(input, init);
+    const duration = Date.now() - startTime;
+    
+    console.log(`[WHATSAPP-ENGINE INBOUND] <- Status ${response.status} (${duration}ms) for ${method} ${urlStr}`);
+    
+    const clonedRes = response.clone();
+    clonedRes.text().then(text => {
+      if (text.includes("violates row-level security") || text.includes("permission denied") || text.includes("42501")) {
+        console.error(`[WHATSAPP-ENGINE SECURITY ALERT] RLS policy blocked the request for ${method} ${urlStr}: ${text}`);
+      }
+    }).catch(() => {});
+
+    return response;
   } catch (err: any) {
-    console.error("Supabase network request failed (connection refused/ENOTFOUND):", err.message || err);
+    console.error(`[WHATSAPP-ENGINE DNS/NETWORK CRASH] Failed to fetch Supabase endpoint: ${err.message || err}`);
     return new Response(JSON.stringify({
       code: "SUPABASE_NETWORK_ERROR",
       message: err.message || "Network connection to Supabase failed",

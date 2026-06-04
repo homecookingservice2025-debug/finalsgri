@@ -507,7 +507,18 @@ export default function WhatsAppCRM({
                            
     if (!isDevOrPreview) {
       const rawUrl = (import.meta as any).env.VITE_API_URL || '';
-      socketUrl = rawUrl && rawUrl.startsWith('http') && !rawUrl.includes('your-ubuntu-vps-ip') ? rawUrl : undefined;
+      const isRawUrlLocal = rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1');
+      const isClientLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      
+      const shouldUseRawUrl = rawUrl && 
+                              rawUrl.startsWith('http') && 
+                              !rawUrl.includes('your-ubuntu-vps-ip') && 
+                              !(isRawUrlLocal && !isClientLocal);
+
+      socketUrl = shouldUseRawUrl ? rawUrl : undefined;
+      console.log(`[Socket Link] Production client. Connecting sockets to: "${socketUrl || 'window.location.origin'}"`);
+    } else {
+      console.log(`[Socket Link] Dev/Preview client. Connecting sockets to: relative current domain`);
     }
     const socketOptions = socketUrl ? { path: '/socket.io' } : undefined;
     const socket = io(socketUrl, socketOptions);

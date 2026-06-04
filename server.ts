@@ -9,8 +9,29 @@ import { WhatsAppEngine } from "./whatsapp-engine";
 
 dotenv.config();
 
-const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").trim();
-const supabaseKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY || "").trim();
+const cleanEnvVar = (val: string | undefined): string => {
+  if (!val) return "";
+  let clean = val.trim();
+  if (clean.startsWith('"') && clean.endsWith('"')) clean = clean.slice(1, -1);
+  if (clean.startsWith("'") && clean.endsWith("'")) clean = clean.slice(1, -1);
+  return clean.trim();
+};
+
+const supabaseUrl = cleanEnvVar(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+const supabaseKey = cleanEnvVar(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY);
+
+// Self-Diagnostic Startup Info
+console.log(`[BOOT] Environment Diagnosis:`);
+console.log(`  - NODE_ENV: "${process.env.NODE_ENV}"`);
+console.log(`  - VERCEL env: "${process.env.VERCEL}"`);
+console.log(`  - SUPABASE_URL length: ${supabaseUrl.length}`);
+if (supabaseUrl) {
+  console.log(`  - SUPABASE_URL starts with: "${supabaseUrl.substring(0, 15)}..."`);
+}
+console.log(`  - SUPABASE_KEY/SERVICE_ROLE length: ${supabaseKey.length}`);
+if (supabaseKey) {
+  console.log(`  - SUPABASE_KEY starts with: "${supabaseKey.substring(0, 10)}..." (ends with: "...${supabaseKey.substring(supabaseKey.length - 6)}")`);
+}
 
 export const isSupabaseConfigured = (): boolean => {
   if (!supabaseUrl || !supabaseKey) return false;
@@ -21,10 +42,23 @@ export const isSupabaseConfigured = (): boolean => {
 
 if (!isSupabaseConfigured()) {
   console.warn("WARNING: SUPABASE_URL or SUPABASE_KEY is missing or carries placeholder values. Operating in local-fallback storage mode.");
+} else {
+  console.log("SUCCESS: Supabase URL and Key found and configured successfully.");
 }
 
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  const urlStr = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input as any).url);
+  const method = init?.method || "GET";
+  
+  console.log(`[SUPABASE API OUTBOUND] -> ${method} ${urlStr}`);
+  if (init?.body) {
+    try {
+      console.log(`[SUPABASE API PAYLOAD] -> ${String(init.body).substring(0, 500)}`);
+    } catch (e) {}
+  }
+
   if (!isSupabaseConfigured()) {
+    console.warn(`[SUPABASE CONFIG EXCEPTION] Attempted Supabase call but Supabase is NOT configured! Blocking: ${urlStr}`);
     return new Response(JSON.stringify({
       code: "SUPABASE_NOT_CONFIGURED",
       message: "Supabase is not configured yet. Operating in local JSON filesystem/in-memory fallback mode.",
@@ -34,10 +68,27 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       headers: { "Content-Type": "application/json" }
     });
   }
+  
   try {
-    return await fetch(input, init);
+    const startTime = Date.now();
+    const response = await fetch(input, init);
+    const duration = Date.now() - startTime;
+    
+    console.log(`[SUPABASE API INBOUND] <- Status ${response.status} (${duration}ms) for ${method} ${urlStr}`);
+    
+    // Asynchronously audit response for database RLS policies / authorization blocks
+    const clonedRes = response.clone();
+    clonedRes.text().then(text => {
+      if (text.includes("violates row-level security") || text.includes("permission denied") || text.includes("42501") || text.includes("new row violates row-level security")) {
+        console.error(`[SUPABASE SECURITY ERROR] RLS policy blocked this request! URL: ${method} ${urlStr}. Error detail:`, text);
+      } else if (response.status >= 400) {
+        console.error(`[SUPABASE ERROR RESP] Status ${response.status} for ${method} ${urlStr}. Payload:`, text);
+      }
+    }).catch(() => {});
+
+    return response;
   } catch (err: any) {
-    console.error("Supabase network request failed (connection refused/ENOTFOUND):", err.message || err);
+    console.error(`[SUPABASE DNS/NETWORK CRASH] Failed to fetch Supabase endpoint: ${err.message || err}`);
     return new Response(JSON.stringify({
       code: "SUPABASE_NETWORK_ERROR",
       message: err.message || "Network connection to Supabase failed",
