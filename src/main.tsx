@@ -11,18 +11,26 @@ try {
     enumerable: true,
     writable: true,
     value: function (input: RequestInfo | URL, init?: RequestInit) {
-      const isDevEnv = window.location.hostname.includes('run.app') || 
-                       window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1';
-                       
-      if (!isDevEnv && typeof input === 'string' && input.startsWith('/api/')) {
-        const baseUrl = (import.meta as any).env.VITE_API_URL || '';
-        if (baseUrl && baseUrl.startsWith('http') && !baseUrl.includes('your-ubuntu-vps-ip')) {
-          const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-          input = `${cleanBase}${input}`;
+      let finalInput = input;
+      if (typeof finalInput === 'string' && finalInput.startsWith('/api/')) {
+        if (window.location.hostname.includes('ais-pre-')) {
+          const devHostname = window.location.hostname.replace('ais-pre-', 'ais-dev-');
+          finalInput = `https://${devHostname}${finalInput}`;
+        } else {
+          const isDevEnv = window.location.hostname.includes('ais-dev-') || 
+                           window.location.hostname === 'localhost' || 
+                           window.location.hostname === '127.0.0.1';
+                           
+          if (!isDevEnv) {
+            const baseUrl = (import.meta as any).env.VITE_API_URL || '';
+            if (baseUrl && baseUrl.startsWith('http') && !baseUrl.includes('your-ubuntu-vps-ip')) {
+              const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+              finalInput = `${cleanBase}${finalInput}`;
+            }
+          }
         }
       }
-      return originalFetch(input, init);
+      return originalFetch(finalInput, init);
     }
   });
 } catch (e) {
