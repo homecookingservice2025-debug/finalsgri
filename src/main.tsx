@@ -13,20 +13,15 @@ try {
     value: function (input: RequestInfo | URL, init?: RequestInit) {
       let finalInput = input;
       if (typeof finalInput === 'string' && finalInput.startsWith('/api/')) {
-        if (window.location.hostname.includes('ais-pre-')) {
-          const devHostname = window.location.hostname.replace('ais-pre-', 'ais-dev-');
-          finalInput = `https://${devHostname}${finalInput}`;
-        } else {
-          const isDevEnv = window.location.hostname.includes('ais-dev-') || 
-                           window.location.hostname === 'localhost' || 
-                           window.location.hostname === '127.0.0.1';
-                           
-          if (!isDevEnv) {
-            const baseUrl = (import.meta as any).env.VITE_API_URL || '';
-            if (baseUrl && baseUrl.startsWith('http') && !baseUrl.includes('your-ubuntu-vps-ip')) {
-              const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-              finalInput = `${cleanBase}${finalInput}`;
-            }
+        const isDevOrPreview = window.location.hostname.includes('run.app') || 
+                               window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1';
+                               
+        if (!isDevOrPreview) {
+          const baseUrl = (import.meta as any).env.VITE_API_URL || '';
+          if (baseUrl && baseUrl.startsWith('http') && !baseUrl.includes('your-ubuntu-vps-ip')) {
+            const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+            finalInput = `${cleanBase}${finalInput}`;
           }
         }
       }

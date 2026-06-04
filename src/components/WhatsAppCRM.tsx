@@ -501,16 +501,13 @@ export default function WhatsAppCRM({
 
     // Setup Socket.IO listener
     let socketUrl: string | undefined = undefined;
-    if (window.location.hostname.includes('ais-pre-')) {
-      const devHostname = window.location.hostname.replace('ais-pre-', 'ais-dev-');
-      socketUrl = `https://${devHostname}`;
-    } else {
-      const isDevEnv = window.location.hostname.includes('ais-dev-') || 
-                       window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1';
-                       
+    const isDevOrPreview = window.location.hostname.includes('run.app') || 
+                           window.location.hostname === 'localhost' || 
+                           window.location.hostname === '127.0.0.1';
+                           
+    if (!isDevOrPreview) {
       const rawUrl = (import.meta as any).env.VITE_API_URL || '';
-      socketUrl = !isDevEnv && rawUrl && rawUrl.startsWith('http') && !rawUrl.includes('your-ubuntu-vps-ip') ? rawUrl : undefined;
+      socketUrl = rawUrl && rawUrl.startsWith('http') && !rawUrl.includes('your-ubuntu-vps-ip') ? rawUrl : undefined;
     }
     const socketOptions = socketUrl ? { path: '/socket.io' } : undefined;
     const socket = io(socketUrl, socketOptions);
