@@ -2849,7 +2849,14 @@ export default function App() {
                     <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full">+12%</span>
                   </div>
                   <h3 className="text-zinc-500 text-sm font-medium">Total {activeModule === 'Hospital' ? 'Patients' : 'Farmers'}</h3>
-                  <p className="text-3xl font-bold text-zinc-900 mt-1">{filteredEntries.length}</p>
+                  <p className="text-3xl font-bold text-zinc-900 mt-1">
+                    {searchTerm 
+                      ? filteredEntries.length 
+                      : (activeModule === 'Hospital'
+                        ? (hospitalCount !== null ? hospitalCount : hospitalEntries.length)
+                        : (dairyCount !== null ? dairyCount : dairyEntries.length))
+                    }
+                  </p>
                 </Card>
                 <Card className="p-6">
                   <div className="flex items-center justify-between mb-4">
