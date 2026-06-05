@@ -1,13 +1,23 @@
 import type { Request, Response } from "express";
-import { app } from "../server.ts";
 
+let app: any = null;
 let bootError: any = null;
 
-// Self-Diagnostic Startup Info for Vercel Serverless environment
-console.log("[BOOT] Vercel Serverless Function loaded successfully.");
+try {
+  // Retrieve 'app' from our pre-compiled production bundle which resolves all relative dependencies
+  const serverModule = await import("../dist/server.cjs");
+  app = serverModule.app;
+  console.log("[BOOT] Vercel Serverless Function loaded server.cjs bundle successfully.");
+} catch (err: any) {
+  console.error("[BOOT ERROR] Failed to load server.cjs bundle:", err);
+  bootError = {
+    message: err.message || String(err),
+    stack: err.stack ? err.stack.split("\n") : []
+  };
+}
 
 export default async function handler(req: any, res: any) {
-  // Diagnostic Endpoint specifically for live environment debugging
+  // Self-Diagnostic Startup Info for Vercel Serverless environment
   const urlPath = req.url || "";
   if (urlPath === "/api/debug-env" || urlPath === "/api/health-diagnostic") {
     return res.status(200).json({
@@ -20,6 +30,15 @@ export default async function handler(req: any, res: any) {
         SUPABASE_URL_CONFIGURED: !!(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL),
         SUPABASE_KEY_CONFIGURED: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY)
       }
+    });
+  }
+
+  if (bootError) {
+    return res.status(500).json({
+      error: "Vercel Boot Failure",
+      message: bootError.message,
+      stack: bootError.stack,
+      guidance: "High-availability server bundle server.cjs failed to load. Please verify your build logs and environment variables."
     });
   }
 
