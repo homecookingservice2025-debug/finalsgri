@@ -1,31 +1,18 @@
 {
   "version": 2,
   "name": "enterprise-whatsapp-crm",
-  "builds": [
+  "rewrites": [
     {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
     },
     {
-      "src": "api/index.ts",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "api/index.ts"
+      "source": "/socket.io/(.*)",
+      "destination": "http://your-ubuntu-vps-ip:3000/socket.io/$1"
     },
     {
-      "src": "/socket.io/(.*)",
-      "dest": "http://your-ubuntu-vps-ip:3000/socket.io/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/$1"
+      "source": "/(.*)",
+      "destination": "/$1"
     }
   ]
 }

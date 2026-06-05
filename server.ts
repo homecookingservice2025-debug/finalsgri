@@ -176,6 +176,42 @@ function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  // Robust middleware to handle stringified/buffered request bodies and log all API requests
+  app.use((req: any, res, next) => {
+    // 1. Safe Body Parsing Parser
+    if (req.body && typeof req.body === 'string') {
+      try {
+        req.body = JSON.parse(req.body);
+      } catch (e) {}
+    } else if (req.body && Buffer.isBuffer(req.body)) {
+      try {
+        req.body = JSON.parse(req.body.toString('utf8'));
+      } catch (e) {}
+    }
+    
+    // Ensure req.body is never null/undefined
+    if (!req.body) {
+      req.body = {};
+    }
+
+    // 2. Comprehensive Logging
+    if (req.path.startsWith('/api/')) {
+      const method = req.method;
+      const path = req.path;
+      const query = JSON.stringify(req.query || {});
+      
+      // Mask password in logs to maintain security/privacy
+      let bodyLog = { ...req.body };
+      if (bodyLog.password) {
+        bodyLog.password = "[MASKED]";
+      }
+      
+      console.log(`[API REQUEST] -> ${method} ${path} | Query: ${query} | Body: ${JSON.stringify(bodyLog)}`);
+    }
+    next();
+  });
+
   const PORT = 3000;
 
   // Middleware to log Supabase config state (non-blocking in-memory fallback enabled)

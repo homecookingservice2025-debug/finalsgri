@@ -282,6 +282,108 @@ export default function App() {
     };
   }, []);
   const [user, setUser] = useState<{ username: string; role: 'admin' | 'staff' } | null>(null);
+  
+  // Real-time backend connectivity diagnostic check
+  const [dbStatus, setDbStatus] = useState<{
+    apiStatus: 'checking' | 'online' | 'offline';
+    supabaseConfigured: boolean | null;
+    supabaseReachable: boolean | null;
+    usingVpsRedirect: boolean;
+    vpsUrlUsed: string;
+    vpsReached: boolean | null;
+    errorDetails?: string;
+  }>({
+    apiStatus: 'checking',
+    supabaseConfigured: null,
+    supabaseReachable: null,
+    usingVpsRedirect: false,
+    vpsUrlUsed: '',
+    vpsReached: null
+  });
+
+  useEffect(() => {
+    const runDiagnostics = async () => {
+      try {
+        const rawUrl = (import.meta as any).env.VITE_API_URL || '';
+        const isRawDev = rawUrl.includes('localhost') || rawUrl.includes('127.0.0.1');
+        const isClientLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        
+        const isDevOrPreview = window.location.hostname.includes('run.app') || 
+                               window.location.hostname === 'localhost' || 
+                               window.location.hostname === '127.0.0.1';
+
+        const shouldUseVps = rawUrl && 
+                             rawUrl.startsWith('http') && 
+                             !rawUrl.includes('your-ubuntu-vps-ip') && 
+                             !(isRawDev && !isClientLocal);
+
+        let testUrl = '/api/health';
+        let stateVpsUrl = '';
+        if (!isDevOrPreview && shouldUseVps) {
+          const cleanBase = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
+          testUrl = `${cleanBase}/api/health`;
+          stateVpsUrl = cleanBase;
+        }
+
+        console.log(`[DIAGNOSTICS] Starting backend ping: "${testUrl}"`);
+        const res = await fetch(testUrl);
+        if (!res.ok) {
+          throw new Error(`API health check returned HTTP status ${res.status}`);
+        }
+
+        const data = await res.json();
+        console.log("[DIAGNOSTICS] Health response payload received:", data);
+
+        let dbReachable = false;
+        let dbDetails = '';
+        if (data.supabase_configured) {
+          // If supabase is configured on the backend, check if it is reachable
+          const testDbUrl = shouldUseVps && !isDevOrPreview 
+            ? `${stateVpsUrl}/api/db-test` 
+            : '/api/db-test';
+          
+          try {
+            const dbRes = await fetch(testDbUrl);
+            const dbData = await dbRes.json();
+            if (dbRes.ok && dbData.success) {
+              dbReachable = true;
+            } else {
+              dbDetails = dbData.message || dbData.error || "Database test returned error state";
+            }
+          } catch (dbErr: any) {
+            dbDetails = dbErr.message || String(dbErr);
+          }
+        } else {
+          dbDetails = "Supabase URL/Key environment variables are missing on the backend. Serving in local-fallback mode.";
+        }
+
+        setDbStatus({
+          apiStatus: 'online',
+          supabaseConfigured: !!data.supabase_configured,
+          supabaseReachable: dbReachable,
+          usingVpsRedirect: !!shouldUseVps && !isDevOrPreview,
+          vpsUrlUsed: stateVpsUrl,
+          vpsReached: true,
+          errorDetails: dbDetails
+        });
+
+      } catch (err: any) {
+        console.error("[DIAGNOSTICS] Connection check aborted due to error:", err);
+        setDbStatus({
+          apiStatus: 'offline',
+          supabaseConfigured: false,
+          supabaseReachable: false,
+          usingVpsRedirect: false,
+          vpsUrlUsed: '',
+          vpsReached: false,
+          errorDetails: err.message || String(err)
+        });
+      }
+    };
+    
+    runDiagnostics();
+  }, [user]);
+
   const [activeModule, setActiveModule] = useState<'Hospital' | 'Dairy'>('Hospital');
   const [activeTab, setActiveTab] = useState('global');
   const [blockedPopupUrl, setBlockedPopupUrl] = useState<string | null>(null);
@@ -2251,6 +2353,78 @@ export default function App() {
             <Input label="Password" name="password" type="password" placeholder="Enter password" required />
             <Button type="submit" className="w-full py-4">Sign In</Button>
           </form>
+
+          {/* Real-time Connection Diagnostics Widget */}
+          <div className="mt-6 border-t border-zinc-100 pt-4">
+            <details className="group">
+              <summary className="flex items-center justify-between text-xs text-zinc-500 font-semibold cursor-pointer hover:text-zinc-800 transition-colors select-none">
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${
+                    dbStatus.apiStatus === 'online' ? 'bg-emerald-500' :
+                    dbStatus.apiStatus === 'offline' ? 'bg-rose-500' : 'bg-amber-500 animate-pulse'
+                  }`} />
+                  System & DB Diagnostics
+                </span>
+                <span className="text-zinc-400 group-open:rotate-180 transition-transform duration-200">▼</span>
+              </summary>
+              
+              <div className="mt-4 space-y-3 text-xs text-zinc-600 bg-zinc-50 p-4 rounded-2xl border border-zinc-100">
+                {/* 1. API Status */}
+                <div className="flex justify-between items-center">
+                  <span>API Connection:</span>
+                  <span className={`px-2 py-0.5 rounded-full font-semibold ${
+                    dbStatus.apiStatus === 'online' ? 'bg-emerald-100 text-emerald-800' :
+                    dbStatus.apiStatus === 'offline' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {dbStatus.apiStatus === 'checking' && "Checking..."}
+                    {dbStatus.apiStatus === 'online' && "Online"}
+                    {dbStatus.apiStatus === 'offline' && "Offline"}
+                  </span>
+                </div>
+
+                {/* 2. Routing Mode */}
+                <div className="flex justify-between items-center">
+                  <span>Routing Engine:</span>
+                  <span className="font-medium text-zinc-700">
+                    {dbStatus.usingVpsRedirect ? (
+                      <span className="text-indigo-600 font-semibold" title={dbStatus.vpsUrlUsed}>
+                        VPS Redirect ({dbStatus.vpsUrlUsed.replace(/^https?:\/\//, '')})
+                      </span>
+                    ) : (
+                      <span className="text-zinc-600 font-semibold">Vercel Serverless</span>
+                    )}
+                  </span>
+                </div>
+
+                {/* 3. Supabase Integration Config */}
+                <div className="flex justify-between items-center">
+                  <span>Supabase Configured:</span>
+                  <span className={`font-semibold ${dbStatus.supabaseConfigured ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {dbStatus.supabaseConfigured === null ? "..." : (dbStatus.supabaseConfigured ? "Yes" : "No (In-Memory Fallback)")}
+                  </span>
+                </div>
+
+                {/* 4. Database Reachability check */}
+                {dbStatus.supabaseConfigured && (
+                  <div className="flex justify-between items-center">
+                    <span>Database Reachable:</span>
+                    <span className={`px-2 py-0.5 rounded-full font-semibold ${
+                      dbStatus.supabaseReachable ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                    }`}>
+                      {dbStatus.supabaseReachable === null ? "..." : (dbStatus.supabaseReachable ? "Connected" : "Failed / Blocked")}
+                    </span>
+                  </div>
+                )}
+
+                {/* 5. Detailed Console Output */}
+                {dbStatus.errorDetails && (
+                  <div className="mt-2 text-[11px] bg-zinc-900 text-zinc-300 font-mono p-2.5 rounded-xl overflow-x-auto max-h-24 whitespace-pre-wrap border border-zinc-800">
+                    <span className="text-zinc-500 font-bold">INFO/ERR DETAIL:</span> {dbStatus.errorDetails}
+                  </div>
+                )}
+              </div>
+            </details>
+          </div>
           <div className="mt-8 pt-8 border-t border-zinc-100 text-center space-y-2">
             <p className="text-xs text-zinc-500 font-bold">
               Developed by Digital Communique Private limited
