@@ -334,6 +334,37 @@ function startServer() {
     });
   });
 
+  app.get("/api/dashboard/counts", async (req, res) => {
+    try {
+      if (!isSupabaseConfigured()) {
+        return res.json({
+          hospital: fallbackHospitalEntries.length,
+          dairy: fallbackDairyEntries.length
+        });
+      }
+
+      const [hRes, dRes] = await Promise.all([
+        supabase
+          .from('hospital_entries')
+          .select('id', { count: 'exact', head: true }),
+        supabase
+          .from('dairy_entries')
+          .select('id', { count: 'exact', head: true })
+      ]);
+
+      const hospital = hRes.error ? fallbackHospitalEntries.length : (hRes.count ?? fallbackHospitalEntries.length);
+      const dairy = dRes.error ? fallbackDairyEntries.length : (dRes.count ?? fallbackDairyEntries.length);
+
+      res.json({ hospital, dairy });
+    } catch (err) {
+      console.error("[COUNT ERROR] Failed to fetch dashboard exact counts:", err);
+      res.json({
+        hospital: fallbackHospitalEntries.length,
+        dairy: fallbackDairyEntries.length
+      });
+    }
+  });
+
   app.get("/api/db-test", async (req, res) => {
     if (!isSupabaseConfigured()) {
       return res.status(503).json({ error: "Supabase not configured" });

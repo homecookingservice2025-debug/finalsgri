@@ -390,6 +390,8 @@ export default function App() {
   const [blockedPopupName, setBlockedPopupName] = useState<string>("");
   const [hospitalEntries, setHospitalEntries] = useState<HospitalEntry[]>([]);
   const [dairyEntries, setDairyEntries] = useState<DairyEntry[]>([]);
+  const [hospitalCount, setHospitalCount] = useState<number | null>(null);
+  const [dairyCount, setDairyCount] = useState<number | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedMediaId, setSelectedMediaId] = useState<number | null>(null);
@@ -1398,6 +1400,18 @@ export default function App() {
         { key: 'posts', url: `/api/masters/${activeModule}/post_master`, setter: setPostMasterList },
         { key: 'staff', url: `/api/staff_accounts/${activeModule}`, setter: setStaffAccounts },
       ];
+
+      // Fetch dynamic dashboard exact counts
+      try {
+        const cntRes = await fetch(`/api/dashboard/counts?t=${Date.now()}`);
+        if (cntRes.ok) {
+          const cntData = await cntRes.json();
+          setHospitalCount(cntData.hospital);
+          setDairyCount(cntData.dairy);
+        }
+      } catch (cntErr) {
+        console.error("Error fetching exact dashboard counts:", cntErr);
+      }
 
       await Promise.all(endpoints.map(async (ep) => {
         try {
@@ -2734,12 +2748,12 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card className="p-6 border-l-4 border-l-blue-500">
                   <h3 className="text-zinc-500 text-sm font-medium">Hospital Patients</h3>
-                  <p className="text-3xl font-bold text-zinc-900 mt-1">{hospitalEntries.length}</p>
+                  <p className="text-3xl font-bold text-zinc-900 mt-1">{hospitalCount !== null ? hospitalCount : hospitalEntries.length}</p>
                   <p className="text-xs text-blue-600 mt-2 font-medium">Total Registered</p>
                 </Card>
                 <Card className="p-6 border-l-4 border-l-emerald-500">
                   <h3 className="text-zinc-500 text-sm font-medium">Dairy Members</h3>
-                  <p className="text-3xl font-bold text-zinc-900 mt-1">{dairyEntries.length}</p>
+                  <p className="text-3xl font-bold text-zinc-900 mt-1">{dairyCount !== null ? dairyCount : dairyEntries.length}</p>
                   <p className="text-xs text-emerald-600 mt-2 font-medium">Farmers & Customers</p>
                 </Card>
                 <Card className="p-6 border-l-4 border-l-purple-500">
@@ -2771,8 +2785,8 @@ export default function App() {
                   <div className="h-80">
                     <ResponsiveContainer width="100%" height={320}>
                       <BarChart data={[
-                        { name: 'Hospital', count: hospitalEntries.length, fill: '#3b82f6' },
-                        { name: 'Dairy', count: dairyEntries.length, fill: '#10b981' },
+                        { name: 'Hospital', count: hospitalCount !== null ? hospitalCount : hospitalEntries.length, fill: '#3b82f6' },
+                        { name: 'Dairy', count: dairyCount !== null ? dairyCount : dairyEntries.length, fill: '#10b981' },
                       ]}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f1f1" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} />
@@ -2794,7 +2808,7 @@ export default function App() {
                         </div>
                         <div>
                           <p className="font-bold text-zinc-900">Hospital Module</p>
-                          <p className="text-xs text-zinc-500">{hospitalEntries.length} Patients Active</p>
+                          <p className="text-xs text-zinc-500">{hospitalCount !== null ? hospitalCount : hospitalEntries.length} Patients Active</p>
                         </div>
                       </div>
                       <Button variant="secondary" size="sm" onClick={() => { setActiveModule('Hospital'); setActiveTab('dashboard'); }}>View</Button>
@@ -2806,7 +2820,7 @@ export default function App() {
                         </div>
                         <div>
                           <p className="font-bold text-zinc-900">Dairy Module</p>
-                          <p className="text-xs text-zinc-500">{dairyEntries.length} Members Active</p>
+                          <p className="text-xs text-zinc-500">{dairyCount !== null ? dairyCount : dairyEntries.length} Members Active</p>
                         </div>
                       </div>
                       <Button variant="secondary" size="sm" onClick={() => { setActiveModule('Dairy'); setActiveTab('dashboard'); }}>View</Button>
