@@ -152,7 +152,28 @@ function startServer() {
     { id: 1, module: "Hospital", name: "Staff Admin", username: "staff", password: "123" }
   ];
   let fallbackHospitalEntries: any[] = [];
+  try {
+    const initialPath = path.join(process.cwd(), 'src', 'initial_patients.json');
+    if (fs.existsSync(initialPath)) {
+      const content = fs.readFileSync(initialPath, 'utf8');
+      fallbackHospitalEntries = content.trim() ? JSON.parse(content) : [];
+      console.log(`[BOOT] Loaded ${fallbackHospitalEntries.length} patients into memory fallback.`);
+    }
+  } catch (e) {
+    console.error("[BOOT] Failed to pre-load initial_patients.json:", e);
+  }
+
   let fallbackDairyEntries: any[] = [];
+  try {
+    const initialPath = path.join(process.cwd(), 'src', 'initial_dairy.json');
+    if (fs.existsSync(initialPath)) {
+      const content = fs.readFileSync(initialPath, 'utf8');
+      fallbackDairyEntries = content.trim() ? JSON.parse(content) : [];
+      console.log(`[BOOT] Loaded ${fallbackDairyEntries.length} dairy records into memory fallback.`);
+    }
+  } catch (e) {
+    console.error("[BOOT] Failed to pre-load initial_dairy.json:", e);
+  }
   let fallbackStateMasters: any[] = [
     { id: 1, module: "Hospital", name: "Uttar Pradesh" },
     { id: 2, module: "Dairy", name: "Uttar Pradesh" }
@@ -162,6 +183,88 @@ function startServer() {
   let fallbackPostMasters: any[] = [];
   let fallbackVillageMasters: any[] = [];
   let fallbackLogs: any[] = [];
+
+  // Auto-seeding routine to automatically populate empty Supabase tables on startup
+  async function autoSeedDatabase() {
+    if (!isSupabaseConfigured()) {
+      console.log("[SEED] Supabase is not configured yet. Auto-seeding skipped.");
+      return;
+    }
+    
+    console.log("[SEED] Checking if Supabase tables require initial seeding...");
+    try {
+      // 1. Seed Hospital Entries if table doesn't have any rows
+      const { data: hospSelect, error: countHospError } = await supabase
+        .from('hospital_entries')
+        .select('id')
+        .limit(1);
+        
+      if (!countHospError && (!hospSelect || hospSelect.length === 0)) {
+        console.log(`[SEED] hospital_entries table is empty. Seeding from local file memory...`);
+        if (fallbackHospitalEntries.length > 0) {
+          const CHUNK_SIZE = 50;
+          for (let i = 0; i < fallbackHospitalEntries.length; i += CHUNK_SIZE) {
+            const chunk = fallbackHospitalEntries.slice(i, i + CHUNK_SIZE);
+            const { error: seedErr } = await supabase
+              .from('hospital_entries')
+              .insert(chunk.map(e => {
+                const { _source, ...cleanedRecord } = e;
+                return cleanedRecord;
+              }));
+            if (seedErr) {
+              console.error(`[SEED] Error seeding hospital chunk starting at index ${i}:`, seedErr);
+              break;
+            }
+          }
+          console.log(`[SEED] Finished seeding hospital_entries with ${fallbackHospitalEntries.length} records!`);
+        }
+      } else if (countHospError) {
+        console.warn("[SEED] Skipping hospital_entries seed or table does not exist yet (requires supabase_schema.sql to be executed):", countHospError.message);
+      } else {
+        console.log(`[SEED] hospital_entries table already contains data. Seeding skipped.`);
+      }
+
+      // 2. Seed Dairy Entries if table doesn't have any rows
+      const { data: dairySelect, error: countDairyError } = await supabase
+        .from('dairy_entries')
+        .select('id')
+        .limit(1);
+        
+      if (!countDairyError && (!dairySelect || dairySelect.length === 0)) {
+        console.log(`[SEED] dairy_entries table is empty. Seeding from local file memory...`);
+        if (fallbackDairyEntries.length > 0) {
+          const CHUNK_SIZE = 50;
+          for (let i = 0; i < fallbackDairyEntries.length; i += CHUNK_SIZE) {
+            const chunk = fallbackDairyEntries.slice(i, i + CHUNK_SIZE);
+            const { error: seedErr } = await supabase
+              .from('dairy_entries')
+              .insert(chunk.map(e => {
+                const { _source, ...cleanedRecord } = e;
+                return cleanedRecord;
+              }));
+            if (seedErr) {
+              console.error(`[SEED] Error seeding dairy chunk starting at index ${i}:`, seedErr);
+              break;
+            }
+          }
+          console.log(`[SEED] Finished seeding dairy_entries with ${fallbackDairyEntries.length} records!`);
+        }
+      } else if (countDairyError) {
+        console.warn("[SEED] Skipping dairy_entries seed or table does not exist yet:", countDairyError.message);
+      } else {
+        console.log(`[SEED] dairy_entries table already contains data. Seeding skipped.`);
+      }
+    } catch (err) {
+      console.error("[SEED] Error in auto-seeding routine:", err);
+    }
+  }
+
+  // Trigger auto-seeding on startup as an async background task
+  if (isSupabaseConfigured()) {
+    autoSeedDatabase().catch(err => {
+      console.error("[SEED] Failed to auto-seed:", err);
+    });
+  }
 
   // CORS configuration to allow cross-origin requests from Vercel deployments
   app.use((req, res, next) => {
@@ -439,14 +542,7 @@ function startServer() {
   // Hospital API
   app.get("/api/hospital/entries", async (req, res) => {
     if (!isSupabaseConfigured()) {
-      let initialData = [];
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_patients.json');
-        if (fs.existsSync(initialPath)) {
-          initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-        }
-      } catch (e) {}
-      return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
+      return res.json(fallbackHospitalEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
     const { data: dbData, error } = await supabase
@@ -457,30 +553,14 @@ function startServer() {
     
     if (error && error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
       console.error('Database fetch error:', error);
-      // Only use fallback if DB fails
-      let initialData = [];
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_patients.json');
-        if (fs.existsSync(initialPath)) {
-          initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-        }
-      } catch (e) {}
-      return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
+      return res.json(fallbackHospitalEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
     
     const data = (dbData || []).map((d: any) => ({ ...d, _source: 'database' }));
     
-    // If DB is empty, try fallback but don't merge them normally to avoid confusing the user
+    // If DB is empty, use our populated in-memory fallback
     if (data.length === 0) {
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_patients.json');
-        if (fs.existsSync(initialPath)) {
-          const initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-          if (initialData.length > 0) {
-            return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
-          }
-        }
-      } catch (e) {}
+      return res.json(fallbackHospitalEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
     res.json(data);
@@ -890,14 +970,7 @@ function startServer() {
 
   app.get("/api/dairy/entries", async (req, res) => {
     if (!isSupabaseConfigured()) {
-      let initialData = [];
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_dairy.json');
-        if (fs.existsSync(initialPath)) {
-          initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-        }
-      } catch (e) {}
-      return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
+      return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
     const { data: dbData, error } = await supabase
@@ -908,28 +981,13 @@ function startServer() {
     
     if (error && error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
       console.error('Database fetch error (Dairy):', error);
-      let initialData = [];
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_dairy.json');
-        if (fs.existsSync(initialPath)) {
-          initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-        }
-      } catch (e) {}
-      return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
+      return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
     
     const data = (dbData || []).map((d: any) => ({ ...d, _source: 'database' }));
 
     if (data.length === 0) {
-      try {
-        const initialPath = path.join(process.cwd(), 'src', 'initial_dairy.json');
-        if (fs.existsSync(initialPath)) {
-          const initialData = JSON.parse(fs.readFileSync(initialPath, 'utf8'));
-          if (initialData.length > 0) {
-            return res.json(initialData.map((d: any) => ({ ...d, _source: 'fallback' })));
-          }
-        }
-      } catch (e) {}
+      return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
     res.json(data);
