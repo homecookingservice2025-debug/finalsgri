@@ -4679,69 +4679,110 @@ export default function App() {
                 </h2>
               </div>
               <div className="flex items-center gap-3">
-                 <Button variant="secondary" onClick={() => exportData(filteredEntries, `${activeModule}_Report`)}>
+                 <Button variant="secondary" onClick={() => exportData(filteredReportEntries, `${activeModule}_Report`)}>
                    <Download className="mr-2" size={16} /> Export CSV
                  </Button>
               </div>
             </div>
 
-            <Card className="p-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 lg:items-end text-left">
-                <Input 
-                  label="Village" 
-                  value={reportFilters.village} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, village: e.target.value })} 
-                  placeholder="Village..." 
-                />
-                <Input 
-                  label="Post" 
-                  value={reportFilters.post} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, post: e.target.value })} 
-                  placeholder="Post..." 
-                />
-                <Select 
-                  label="State" 
-                  value={reportFilters.state} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, state: e.target.value })} 
-                  options={[
-                    { value: '', label: 'Select State' },
-                    ...INDIAN_STATES.map(s => ({ value: s, label: s }))
-                  ]}
-                />
-                <Input 
-                  label="District" 
-                  value={reportFilters.district} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, district: e.target.value })} 
-                  placeholder="District" 
-                />
-                <Input 
-                  label="Block" 
-                  value={reportFilters.block} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, block: e.target.value })} 
-                  placeholder="Block" 
-                />
-                <Input 
-                  label="Pincode" 
-                  value={reportFilters.pincode} 
-                  onChange={(e: any) => setReportFilters({ ...reportFilters, pincode: e.target.value })} 
-                  placeholder="Pincode" 
-                />
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
-                    <Input 
-                      label={activeModule === 'Hospital' ? "Search Name/Phone" : "Search (Name/Phone)"}
-                      value={reportFilters.search} 
-                      onChange={(e: any) => setReportFilters({ ...reportFilters, search: e.target.value })} 
-                      placeholder={activeModule === 'Hospital' ? "Type name or phone..." : "Type to search..."} 
+            <Card className="overflow-hidden border-none shadow-xl">
+              <div className={`${activeModule === 'Dairy' ? 'bg-emerald-600' : 'bg-blue-600'} px-6 py-4`}>
+                <h3 className="text-xl font-bold text-white">
+                  {activeModule === 'Dairy' ? '🚜 Farmer Analytical Report Filters' : '📋 User Report Filters (Village to Pincode)'}
+                </h3>
+              </div>
+              <div className="p-8 bg-white space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">Village</label>
+                    <input 
+                      type="text" 
+                      placeholder="Village..."
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.village}
+                      onChange={(e) => setReportFilters({ ...reportFilters, village: e.target.value })}
                     />
                   </div>
-                  <button 
-                    onClick={() => setReportFilters({ village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' })}
-                    className="p-2 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-all mb-0.5 h-[42px]"
-                    title="Reset Filters"
-                  >
-                    <RotateCcw size={18} />
-                  </button>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">Post</label>
+                    <input 
+                      type="text" 
+                      placeholder="Post..."
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.post}
+                      onChange={(e) => setReportFilters({ ...reportFilters, post: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">State</label>
+                    <select 
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all bg-white font-sans"
+                      value={reportFilters.state}
+                      onChange={(e) => setReportFilters({ ...reportFilters, state: e.target.value })}
+                    >
+                      <option value="">Select State</option>
+                      {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">District</label>
+                    <input 
+                      type="text" 
+                      placeholder="District"
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.district}
+                      onChange={(e) => setReportFilters({ ...reportFilters, district: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">Block</label>
+                    <input 
+                      type="text" 
+                      placeholder="Block"
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.block}
+                      onChange={(e) => setReportFilters({ ...reportFilters, block: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">Pincode</label>
+                    <input 
+                      type="text" 
+                      placeholder="Pincode"
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.pincode}
+                      onChange={(e) => setReportFilters({ ...reportFilters, pincode: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                  <div className="flex-1 space-y-2">
+                    <label className="text-sm font-bold text-zinc-900">Search Name/Phone</label>
+                    <input 
+                      type="text" 
+                      placeholder="Type name or phone..."
+                      className="w-full max-w-md px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                      value={reportFilters.search}
+                      onChange={(e) => setReportFilters({ ...reportFilters, search: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => fetchData()} 
+                      className={`flex items-center gap-2 px-8 py-2.5 ${activeModule === 'Dairy' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} text-white rounded-lg font-bold transition-all shadow-lg active:scale-95`}
+                    >
+                      <Search size={18} />
+                      Filter Data
+                    </button>
+                    <button 
+                      onClick={() => setReportFilters({ village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' })}
+                      className="flex items-center gap-2 px-8 py-2.5 bg-zinc-600 text-white rounded-lg font-bold hover:bg-zinc-700 transition-all shadow-lg shadow-zinc-200 active:scale-95"
+                    >
+                      <RotateCcw size={18} />
+                      Reset
+                    </button>
+                  </div>
                 </div>
               </div>
             </Card>
@@ -4765,7 +4806,7 @@ export default function App() {
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-zinc-100">
-                     {filteredEntries.map((entry, idx) => (
+                     {filteredReportEntries.map((entry, idx) => (
                        <tr key={entry.id} className="hover:bg-zinc-50/50">
                          <td className="px-6 py-4 text-sm font-mono text-zinc-400">#{idx + 1001}</td>
                          <td className="px-6 py-4">
@@ -4783,7 +4824,7 @@ export default function App() {
                          </td>
                        </tr>
                      ))}
-                     {filteredEntries.length === 0 && (
+                     {filteredReportEntries.length === 0 && (
                        <tr>
                          <td colSpan={6} className="px-6 py-12 text-center text-zinc-400">
                            No records found matching the filters.
