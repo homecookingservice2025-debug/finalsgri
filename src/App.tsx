@@ -698,6 +698,16 @@ export default function App() {
     search: ''
   });
 
+  const [appliedReportFilters, setAppliedReportFilters] = useState({
+    village: '',
+    post: '',
+    state: '',
+    district: '',
+    block: '',
+    pincode: '',
+    search: ''
+  });
+
   // Form States
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingEntry, setEditingEntry] = useState<any>(null);
@@ -2234,20 +2244,28 @@ export default function App() {
 
   const filteredReportEntries = (Array.isArray(activeModule === 'Hospital' ? hospitalEntries : dairyEntries) ? (activeModule === 'Hospital' ? hospitalEntries : dairyEntries) : []).filter(e => {
     const s = reportFilters;
-    const name = String(e.name || '');
-    const phone = String(e.phone || '');
-    const village = String(e.village || '');
+    const name = String(e.name || '').trim().toLowerCase();
+    const phone = String(e.phone || '').trim();
+    const village = String(e.village || '').trim().toLowerCase();
     
-    const matchesSearch = !s.search || 
-      name.toLowerCase().includes(s.search.toLowerCase()) || 
-      phone.includes(s.search);
+    const searchVal = String(s.search || '').trim().toLowerCase();
+    const villageVal = String(s.village || '').trim().toLowerCase();
+    const postVal = String(s.post || '').trim().toLowerCase();
+    const stateVal = String(s.state || '').trim().toLowerCase();
+    const districtVal = String(s.district || '').trim().toLowerCase();
+    const blockVal = String(s.block || '').trim().toLowerCase();
+    const pincodeVal = String(s.pincode || '').trim();
+
+    const matchesSearch = !searchVal || 
+      name.includes(searchVal) || 
+      phone.includes(searchVal);
     
-    const matchesVillage = !s.village || village.toLowerCase().includes(s.village.toLowerCase());
-    const matchesPost = !s.post || String((e as HospitalEntry).post || '').toLowerCase().includes(s.post.toLowerCase());
-    const matchesState = !s.state || String(e.state || '').toLowerCase().includes(s.state.toLowerCase());
-    const matchesDistrict = !s.district || String(e.district || '').toLowerCase().includes(s.district.toLowerCase());
-    const matchesBlock = !s.block || String(e.block || '').toLowerCase().includes(s.block.toLowerCase());
-    const matchesPincode = !s.pincode || String(e.pincode || '').includes(s.pincode);
+    const matchesVillage = !villageVal || village.includes(villageVal);
+    const matchesPost = !postVal || String((e as HospitalEntry).post || '').trim().toLowerCase().includes(postVal);
+    const matchesState = !stateVal || String(e.state || '').trim().toLowerCase().includes(stateVal);
+    const matchesDistrict = !districtVal || String(e.district || '').trim().toLowerCase().includes(districtVal);
+    const matchesBlock = !blockVal || String(e.block || '').trim().toLowerCase().includes(blockVal);
+    const matchesPincode = !pincodeVal || String(e.pincode || '').trim().includes(pincodeVal);
     
     return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
   });
@@ -4020,14 +4038,22 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-3">
                       <button 
-                        onClick={() => fetchData()} 
+                        onClick={() => {
+                          setAppliedReportFilters({ ...reportFilters });
+                          toast.success("Filters applied successfully!");
+                        }} 
                         className="flex items-center gap-2 px-8 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 active:scale-95"
                       >
                         <Search size={18} />
                         Filter Data
                       </button>
                       <button 
-                        onClick={() => setReportFilters({ village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' })}
+                        onClick={() => {
+                          const cleared = { village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' };
+                          setReportFilters(cleared);
+                          setAppliedReportFilters(cleared);
+                          toast.success("Filters reset successfully!");
+                        }}
                         className="flex items-center gap-2 px-8 py-2.5 bg-zinc-600 text-white rounded-lg font-bold hover:bg-zinc-700 transition-all shadow-lg shadow-zinc-200 active:scale-95"
                       >
                         <RotateCcw size={18} />
@@ -4769,14 +4795,22 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-3">
                     <button 
-                      onClick={() => fetchData()} 
+                      onClick={() => {
+                        setAppliedReportFilters({ ...reportFilters });
+                        toast.success("Filters applied successfully!");
+                      }} 
                       className={`flex items-center gap-2 px-8 py-2.5 ${activeModule === 'Dairy' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'} text-white rounded-lg font-bold transition-all shadow-lg active:scale-95`}
                     >
                       <Search size={18} />
                       Filter Data
                     </button>
                     <button 
-                      onClick={() => setReportFilters({ village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' })}
+                      onClick={() => {
+                        const cleared = { village: '', post: '', state: '', district: '', block: '', pincode: '', search: '' };
+                        setReportFilters(cleared);
+                        setAppliedReportFilters(cleared);
+                        toast.success("Filters reset successfully!");
+                      }}
                       className="flex items-center gap-2 px-8 py-2.5 bg-zinc-600 text-white rounded-lg font-bold hover:bg-zinc-700 transition-all shadow-lg shadow-zinc-200 active:scale-95"
                     >
                       <RotateCcw size={18} />
