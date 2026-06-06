@@ -2270,6 +2270,58 @@ export default function App() {
     return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
   });
 
+  const getContactForLog = React.useCallback((phone: string) => {
+    const cleanPh = String(phone || '').replace(/\D/g, '');
+    if (!cleanPh) return null;
+    const entries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
+    return entries.find(e => {
+      const cleanE = String(e.phone || '').replace(/\D/g, '');
+      if (!cleanE) return false;
+      if (cleanPh === cleanE) return true;
+      if (cleanPh.length >= 10 && cleanE.length >= 10) {
+        return cleanPh.slice(-10) === cleanE.slice(-10);
+      }
+      return false;
+    }) || null;
+  }, [activeModule, hospitalEntries, dairyEntries]);
+
+  const filteredMessageLogs = React.useMemo(() => {
+    return (Array.isArray(logs) ? logs : []).filter(log => {
+      const s = reportFilters;
+      const contact = getContactForLog(log.recipient_phone);
+      
+      const name = String(contact ? contact.name : (log.recipient_name || '')).trim().toLowerCase();
+      const phone = String(log.recipient_phone || '').trim();
+      const village = String(contact ? contact.village : '').trim().toLowerCase();
+      const post = String(contact ? (contact as HospitalEntry).post || '' : '').trim().toLowerCase();
+      const state = String(contact ? (contact as HospitalEntry).state || '' : '').trim().toLowerCase();
+      const district = String(contact ? (contact as HospitalEntry).district || '' : '').trim().toLowerCase();
+      const block = String(contact ? (contact as HospitalEntry).block || '' : '').trim().toLowerCase();
+      const pincode = String(contact ? (contact as HospitalEntry).pincode || '' : '').trim();
+
+      const searchVal = String(s.search || '').trim().toLowerCase();
+      const villageVal = String(s.village || '').trim().toLowerCase();
+      const postVal = String(s.post || '').trim().toLowerCase();
+      const stateVal = String(s.state || '').trim().toLowerCase();
+      const districtVal = String(s.district || '').trim().toLowerCase();
+      const blockVal = String(s.block || '').trim().toLowerCase();
+      const pincodeVal = String(s.pincode || '').trim();
+
+      const matchesSearch = !searchVal || 
+        name.includes(searchVal) || 
+        phone.includes(searchVal);
+      
+      const matchesVillage = !villageVal || village.includes(villageVal);
+      const matchesPost = !postVal || post.includes(postVal);
+      const matchesState = !stateVal || state.includes(stateVal);
+      const matchesDistrict = !districtVal || district.includes(districtVal);
+      const matchesBlock = !blockVal || block.includes(blockVal);
+      const matchesPincode = !pincodeVal || pincode.includes(pincodeVal);
+      
+      return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
+    });
+  }, [logs, reportFilters, getContactForLog]);
+
   const ageGroupDistribution = React.useMemo(() => {
     const entries = filteredReportEntries;
     const groups = [
@@ -4257,14 +4309,38 @@ export default function App() {
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="font-bold text-zinc-900">Message Transmission Reports</h3>
                   <div className="flex items-center gap-2">
-                    <Button variant="secondary" className="flex items-center gap-2" onClick={() => exportData(logs, 'Messaging_Report')}>
-                      <Download size={16} />
-                      Download CSV Report
-                    </Button>
-                    <Button variant="secondary" className="flex items-center gap-2" onClick={() => exportPDF(logs, 'Messaging_Report')}>
-                      <FileBarChart size={16} />
-                      Download PDF Report
-                    </Button>
+                    {(() => {
+                      const preparedLogsForExport = filteredMessageLogs.map(log => {
+                        const contact = getContactForLog(log.recipient_phone);
+                        return {
+                          id: log.id,
+                          recipient_name: contact ? contact.name : log.recipient_name,
+                          recipient_phone: log.recipient_phone,
+                          recipient_village: contact ? contact.village : '-',
+                          recipient_block: contact ? contact.block : '-',
+                          recipient_district: contact ? contact.district : '-',
+                          recipient_post: contact ? (contact as HospitalEntry).post : '-',
+                          recipient_pincode: contact ? contact.pincode : '-',
+                          message: log.message,
+                          action_type: log.action_type || 'Send',
+                          media_name: log.media_name || '-',
+                          status: log.status,
+                          sent_at: log.sent_at
+                        };
+                      });
+                      return (
+                        <>
+                          <Button variant="secondary" className="flex items-center gap-2" onClick={() => exportData(preparedLogsForExport, 'Messaging_Report')}>
+                            <Download size={16} />
+                            Download CSV Report
+                          </Button>
+                          <Button variant="secondary" className="flex items-center gap-2" onClick={() => exportPDF(preparedLogsForExport, 'Messaging_Report')}>
+                            <FileBarChart size={16} />
+                            Download PDF Report
+                          </Button>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
                 <div className="overflow-x-auto">
@@ -4279,41 +4355,44 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
-                      {logs.map((log) => (
-                        <tr key={log.id}>
-                          <td className="px-6 py-4">
-                            <p className="text-sm font-bold text-zinc-900">{log.recipient_name}</p>
-                            <p className="text-xs text-zinc-500">{log.recipient_phone}</p>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className={cn(
-                              "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
-                              log.action_type === 'Share' ? "bg-blue-50 text-blue-600" : "bg-zinc-100 text-zinc-600"
-                            )}>
-                              {log.action_type || 'Send'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4 text-sm text-zinc-600">
-                            {log.media_name ? (
-                              <div className="flex items-center gap-1">
-                                <FileText size={14} className="text-zinc-400" />
-                                <span className="truncate max-w-[150px]">{log.media_name}</span>
-                              </div>
-                            ) : '-'}
-                          </td>
-                          <td className="px-6 py-4 text-sm text-zinc-600">
-                            {(() => {
-                              try {
-                                const d = parseISO(log.sent_at);
-                                return isValid(d) ? format(d, 'MMM dd, yyyy HH:mm') : 'Invalid date';
-                              } catch (e) { return 'Invalid date'; }
-                            })()}
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold uppercase tracking-wider">{log.status}</span>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredMessageLogs.map((log) => {
+                        const contact = getContactForLog(log.recipient_phone);
+                        return (
+                          <tr key={log.id}>
+                            <td className="px-6 py-4">
+                              <p className="text-sm font-bold text-zinc-900">{contact ? contact.name : (log.recipient_name || 'Unknown Recipient')}</p>
+                              <p className="text-xs text-zinc-500">{log.recipient_phone}</p>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={cn(
+                                "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider",
+                                log.action_type === 'Share' ? "bg-blue-50 text-blue-600" : "bg-zinc-100 text-zinc-600"
+                              )}>
+                                {log.action_type || 'Send'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-zinc-600">
+                              {log.media_name ? (
+                                <div className="flex items-center gap-1">
+                                  <FileText size={14} className="text-zinc-400" />
+                                  <span className="truncate max-w-[150px]">{log.media_name}</span>
+                                </div>
+                              ) : '-'}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-zinc-600">
+                              {(() => {
+                                try {
+                                  const d = parseISO(log.sent_at);
+                                  return isValid(d) ? format(d, 'MMM dd, yyyy HH:mm') : 'Invalid date';
+                                } catch (e) { return 'Invalid date'; }
+                              })()}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="px-2 py-1 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold uppercase tracking-wider">{log.status}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
