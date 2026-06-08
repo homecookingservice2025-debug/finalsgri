@@ -1,6 +1,8 @@
 import { Server } from "socket.io";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
 
@@ -86,6 +88,7 @@ export class WhatsAppEngine {
     this.io = io;
     console.log("WhatsApp Engine Initialized successfully.");
     this.startScheduler();
+    this.startAutomatedGreetingsScheduler();
   }
 
   // Generate simulated Baileys QR code for scanning
@@ -108,7 +111,7 @@ export class WhatsAppEngine {
     // Step 2: Set a timeout for automatic mock pairing success after 120 seconds (2 minutes of scan time)
     // This gives them ample time, and avoids auto-closing in 20 seconds.
     const timeout = setTimeout(async () => {
-      const mockPhone = `9198765${Math.floor(10000 + Math.random() * 90000)}`;
+      const mockPhone = "7307433714";
       console.log(`WhatsApp pairing automatic fallback successful on account #${accountId} to: ${mockPhone}`);
       io.emit(`whatsapp:connected:${accountId}`, {
         status: "connected",
@@ -214,10 +217,12 @@ export class WhatsAppEngine {
         failedCount++;
       }
 
-      // Record message log
-      await this.logWhatsAppMessage(campaignId, name, phone, personalizedMessage, status, errorMsg);
+      // Record message log (dispatched in background to make bulk sending ultra-fast without database roundtrip delays)
+      this.logWhatsAppMessage(campaignId, name, phone, personalizedMessage, status, errorMsg).catch(err => {
+        console.error("Background message logging failed:", err);
+      });
 
-      // Emit real-time status update via socket
+      // Emit real-time status update via socket (instant, memory-only)
       this.io.emit(`campaign:progress:${campaignId}`, {
         campaignId,
         sentCount,
@@ -226,8 +231,10 @@ export class WhatsAppEngine {
         percentage: Math.round(((i + 1) / contacts.length) * 100)
       });
 
-      // Update database periodically
-      await this.updateCampaignStatus(campaignId, "processing", sentCount, failedCount);
+      // Update database periodically (every 25 contacts or last step) to avoid connection pooling bottlenecks
+      if (i % 25 === 0 || i === contacts.length - 1) {
+        await this.updateCampaignStatus(campaignId, "processing", sentCount, failedCount);
+      }
     }
 
     // Set to completed
@@ -304,5 +311,243 @@ export class WhatsAppEngine {
         console.error("Error running scheduler:", err);
       }
     }, 15000); // Checks every 15 seconds
+  }
+
+  // Periodic Scheduler for Automated Birthday & Anniversary Wishes
+  private startAutomatedGreetingsScheduler() {
+    if (process.env.VERCEL || process.env.NETLIFY) return;
+    
+    // Run first check after 10 seconds of boot
+    setTimeout(() => {
+      this.checkAndSendAutomatedGreetings();
+    }, 10000);
+
+    // Run periodic automated check every 30 minutes
+    setInterval(() => {
+      this.checkAndSendAutomatedGreetings();
+    }, 30 * 60 * 1000);
+  }
+
+  // Main automated checking worker for Birthdays & Anniversaries
+  public async checkAndSendAutomatedGreetings() {
+    console.log("[AUTOMATION-WORKER] Running automated birthday & wedding anniversary greetings checker...");
+
+    const isDb = isSupabaseConfigured();
+    let settingsList: any[] = [];
+    let hospitalEntries: any[] = [];
+    let dairyEntries: any[] = [];
+    let templatesList: any[] = [];
+
+    if (isDb) {
+      try {
+        // 1. Fetch settings configuration
+        const { data: sData } = await supabase.from("settings").select("*");
+        settingsList = sData || [];
+
+        // 2. Fetch hospital entries in multiple pages to support unlimited (>1000) records safely
+        let page = 0;
+        let hasMore = true;
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from("hospital_entries")
+            .select("*")
+            .range(page * 1000, (page + 1) * 1000 - 1);
+          if (error || !data || data.length === 0) {
+            hasMore = false;
+          } else {
+            hospitalEntries.push(...data);
+            if (data.length < 1000) hasMore = false;
+            else page++;
+          }
+        }
+
+        // 3. Fetch dairy entries in pages as well
+        page = 0;
+        hasMore = true;
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from("dairy_entries")
+            .select("*")
+            .range(page * 1000, (page + 1) * 1000 - 1);
+          if (error || !data || data.length === 0) {
+            hasMore = false;
+          } else {
+            dairyEntries.push(...data);
+            if (data.length < 1000) hasMore = false;
+            else page++;
+          }
+        }
+
+        // 4. Fetch custom templates
+        const { data: tData } = await supabase.from("templates").select("*");
+        templatesList = tData || [];
+      } catch (err: any) {
+        console.error("[AUTOMATION-WORKER] Database loading failed during automated task:", err.message);
+        return; // Halt to prevent false duplicates checks on corrupted DB states
+      }
+    } else {
+      // Offline fallback files parsing helper
+      try {
+        const hPath = path.join(process.cwd(), "src", "initial_patients.json");
+        if (fs.existsSync(hPath)) {
+          hospitalEntries = JSON.parse(fs.readFileSync(hPath, "utf8"));
+        }
+        const dPath = path.join(process.cwd(), "src", "initial_dairy.json");
+        if (fs.existsSync(dPath)) {
+          dairyEntries = JSON.parse(fs.readFileSync(dPath, "utf8"));
+        }
+        // Emulated mock settings representing enabled states for fallbacks
+        settingsList = [
+          { module: 'Hospital', auto_birthday: true, auto_anniversary: true },
+          { module: 'Dairy', auto_birthday: true, auto_anniversary: true }
+        ];
+      } catch (err: any) {
+        console.error("[AUTOMATION-WORKER] Local filesystem fallback loading failed:", err);
+      }
+    }
+
+    console.log(`[AUTOMATION-WORKER] Core Registry Evaluated: Hospital Patients Count (${hospitalEntries.length}), Dairy Farmers Count (${dairyEntries.length})`);
+
+    // Extremely resilient date matching evaluator supporting YYYY-MM-DD, DD-MM-YYYY, and standard Date patterns
+    const isToday = (dateString?: string) => {
+      if (!dateString || dateString.length < 5) return false;
+      try {
+        const d = new Date(dateString);
+        if (isNaN(d.getTime())) {
+          const clean = dateString.trim();
+          const parts = clean.split(/[-/]/);
+          if (parts.length === 3) {
+            const today = new Date();
+            const currentDay = today.getDate();
+            const currentMonth = today.getMonth() + 1;
+            // format YYYY-MM-DD
+            if (parts[0].length === 4) {
+              const mm = parseInt(parts[1]);
+              const dd = parseInt(parts[2]);
+              return mm === currentMonth && dd === currentDay;
+            }
+            // format DD-MM-YYYY
+            if (parts[2].length === 4) {
+              const dd = parseInt(parts[0]);
+              const mm = parseInt(parts[1]);
+              return mm === currentMonth && dd === currentDay;
+            }
+          }
+          return false;
+        }
+        const today = new Date();
+        const localMatch = d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
+        const utcMatch = d.getUTCMonth() === today.getUTCMonth() && d.getUTCDate() === today.getUTCDate();
+        return localMatch || utcMatch;
+      } catch {
+        return false;
+      }
+    };
+
+    // Evaluate configurations for both Enterprise modules
+    const targetModules = ["Hospital", "Dairy"];
+    for (const mod of targetModules) {
+      const config = settingsList.find(s => s.module === mod) || { auto_birthday: false, auto_anniversary: false };
+      const autoBirthday = !!config.auto_birthday;
+      const autoAnniversary = !!config.auto_anniversary;
+
+      if (!autoBirthday && !autoAnniversary) {
+        console.log(`[AUTOMATION-WORKER] Automatic birthday/anniversary greetings are disabled for: "${mod}"`);
+        continue;
+      }
+
+      const entries = mod === "Hospital" ? hospitalEntries : dairyEntries;
+      
+      // Determine the specific message template to send
+      const bdayTemplate = templatesList.find(t => t.module === mod && (t.type === "Birthday" || t.name?.toLowerCase().includes("birthday")))?.content || 
+        "Wishing you a very Happy Birthday, {{name}}! May this year bring you endless happiness, gorgeous milestones, and great health! 🎂🎉";
+      const annivTemplate = templatesList.find(t => t.module === mod && (t.type === "Anniversary" || t.name?.toLowerCase().includes("anniversary")))?.content || 
+        "Wishing you a very Happy Anniversary, {{name}}! May your bond grow stronger and your life be filled with love and prosperity! 💍✨";
+
+      // Track duplicate recipient checks within the last 18 hours to prevent spam
+      let sentTodayPhones = new Set<string>();
+      if (isDb) {
+        try {
+          const checkBoundary = new Date();
+          checkBoundary.setHours(checkBoundary.getHours() - 18); // Check message records sent within last 18 hours
+
+          const { data: messagesSent } = await supabase
+            .from("whatsapp_messages")
+            .select("recipient_phone")
+            .gte("sent_at", checkBoundary.toISOString());
+
+          if (messagesSent) {
+            messagesSent.forEach(m => {
+              if (m.recipient_phone) {
+                sentTodayPhones.add(m.recipient_phone.trim());
+              }
+            });
+          }
+        } catch (err: any) {
+          console.error("[AUTOMATION-WORKER] Failed to query message duplicate checks cache:", err);
+        }
+      }
+
+      for (const entity of entries) {
+        if (!entity.phone) continue;
+        const phoneNo = entity.phone.trim();
+        const contactName = entity.name || "Customer";
+
+        // Prevent spam or duplicate greetings sent on the same day
+        if (sentTodayPhones.has(phoneNo)) {
+          continue;
+        }
+
+        // 1. Process automated birthdays
+        if (autoBirthday && isToday(entity.dob)) {
+          const customized = bdayTemplate.replace(/\{\{name\}\}/gi, contactName);
+          console.log(`[AUTOMATION-WORKER] Dispatching automated birthday wish to ${contactName} at ${phoneNo}`);
+          await this.logAndSendDirectGreeting(contactName, phoneNo, customized, "Automated Birthday Wish");
+          sentTodayPhones.add(phoneNo); // Mark to block same-day message duplication
+        }
+
+        // 2. Process automated wedding anniversaries
+        if (autoAnniversary && isToday(entity.anniversary) && !sentTodayPhones.has(phoneNo)) {
+          const customized = annivTemplate.replace(/\{\{name\}\}/gi, contactName);
+          console.log(`[AUTOMATION-WORKER] Dispatching automated anniversary greeting to ${contactName} at ${phoneNo}`);
+          await this.logAndSendDirectGreeting(contactName, phoneNo, customized, "Automated Anniversary Greeting");
+          sentTodayPhones.add(phoneNo);
+        }
+      }
+    }
+  }
+
+  // Low level dispatcher logging message states inside the DB or memory and emitting live UI updates
+  private async logAndSendDirectGreeting(name: string, phone: string, text: string, type: string) {
+    const isDb = isSupabaseConfigured();
+    const possibleStatuses = ["seen", "delivered", "sent"];
+    const simulatedStatus = possibleStatuses[Math.floor(Math.random() * possibleStatuses.length)];
+
+    if (isDb) {
+      try {
+        await supabase
+          .from("whatsapp_messages")
+          .insert([{
+            recipient_name: name,
+            recipient_phone: phone,
+            message: text,
+            status: simulatedStatus,
+            error_message: null,
+            sent_at: new Date().toISOString()
+          }]);
+      } catch (err) {
+        console.error("[AUTOMATION-WORKER] Failed to insert automated greeting delivery entry:", err);
+      }
+    }
+
+    // Emit live to Web Socket listeners on the frontend so CRM dashboards update in real-time
+    this.io.emit("message:scheduled:sent", {
+      id: Date.now(),
+      recipient_name: name,
+      recipient_phone: phone,
+      message: text,
+      status: simulatedStatus,
+      type
+    });
   }
 }

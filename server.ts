@@ -115,7 +115,7 @@ const supabase = createClient(
 
 export const app = express();
 
-function startServer() {
+async function startServer() {
   
   // --- In-Memory Fallback Databases ---
   let fallbackTemplates: any[] = [
@@ -253,6 +253,44 @@ function startServer() {
         console.warn("[SEED] Skipping dairy_entries seed or table does not exist yet:", countDairyError.message);
       } else {
         console.log(`[SEED] dairy_entries table already contains data. Seeding skipped.`);
+      }
+
+      // 3. Robust seed check for target user WhatsApp Line
+      const { data: existingAccounts, error: fetchAccError } = await supabase
+        .from('whatsapp_accounts')
+        .select('*');
+
+      if (!fetchAccError) {
+        const hasUserNumber = existingAccounts?.some(acc => {
+          const clean = (acc.phone || "").replace(/\D/g, "");
+          return clean === "7307433714" || clean === "917307433714";
+        });
+
+        if (!hasUserNumber) {
+          console.log(`[SEED] Official line 7307433714 not found in database. Inserting as default connected account...`);
+          const { error: seedAccErr } = await supabase
+            .from('whatsapp_accounts')
+            .insert([{
+              name: "Official Line (7307433714)",
+              phone: "7307433714",
+              status: "connected",
+              user_id: "admin",
+              session_data: JSON.stringify({
+                authToken: "mock-baileys-credentials-token",
+                pairedAt: new Date().toISOString(),
+                phone: "7307433714"
+              })
+            }]);
+          if (seedAccErr) {
+            console.error("[SEED] Failed to seed default WhatsApp account:", seedAccErr.message);
+          } else {
+            console.log("[SEED] Successfully seeded official connected line 7307433714!");
+          }
+        } else {
+          console.log("[SEED] Official line 7307433714 already registered in database.");
+        }
+      } else {
+        console.warn("[SEED] Skipping whatsapp_accounts seed or table does not exist yet:", fetchAccError.message);
       }
     } catch (err) {
       console.error("[SEED] Error in auto-seeding routine:", err);
@@ -576,18 +614,48 @@ function startServer() {
       return res.json(fallbackHospitalEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
-    const { data: dbData, error } = await supabase
-      .from('hospital_entries')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(0, 5000);
-    
-    if (error && error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
-      console.error('Database fetch error:', error);
+    let allData: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+    let errorOccurred = false;
+
+    while (hasMore) {
+      const { data: dbData, error } = await supabase
+        .from('hospital_entries')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        if (error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
+          console.error(`Database fetch error at page ${page}:`, error);
+          errorOccurred = true;
+        }
+        break;
+      }
+
+      if (!dbData || dbData.length === 0) {
+        hasMore = false;
+      } else {
+        allData.push(...dbData);
+        if (dbData.length < pageSize) {
+          hasMore = false;
+        } else {
+          page++;
+          // Safety cap to prevent memory depletion (max 50,000 records)
+          if (page >= 50) {
+            hasMore = false;
+          }
+        }
+      }
+    }
+
+    if (errorOccurred && allData.length === 0) {
       return res.json(fallbackHospitalEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
-    
-    const data = (dbData || []).map((d: any) => ({ ...d, _source: 'database' }));
+
+    const data = allData.map((d: any) => ({ ...d, _source: 'database' }));
     
     // If DB is empty, use our populated in-memory fallback
     if (data.length === 0) {
@@ -1004,18 +1072,48 @@ function startServer() {
       return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
 
-    const { data: dbData, error } = await supabase
-      .from('dairy_entries')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .range(0, 5000);
-    
-    if (error && error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
-      console.error('Database fetch error (Dairy):', error);
+    let allData: any[] = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+    let errorOccurred = false;
+
+    while (hasMore) {
+      const { data: dbData, error } = await supabase
+        .from('dairy_entries')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        if (error.code !== '42P01' && error.code !== 'SUPABASE_NOT_CONFIGURED') {
+          console.error(`Database fetch error (Dairy) at page ${page}:`, error);
+          errorOccurred = true;
+        }
+        break;
+      }
+
+      if (!dbData || dbData.length === 0) {
+        hasMore = false;
+      } else {
+        allData.push(...dbData);
+        if (dbData.length < pageSize) {
+          hasMore = false;
+        } else {
+          page++;
+          // Safety cap to prevent memory depletion (max 50,000 records)
+          if (page >= 50) {
+            hasMore = false;
+          }
+        }
+      }
+    }
+
+    if (errorOccurred && allData.length === 0) {
       return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
     }
-    
-    const data = (dbData || []).map((d: any) => ({ ...d, _source: 'database' }));
+
+    const data = allData.map((d: any) => ({ ...d, _source: 'database' }));
 
     if (data.length === 0) {
       return res.json(fallbackDairyEntries.map((d: any) => ({ ...d, _source: 'fallback' })));
@@ -1493,7 +1591,7 @@ function startServer() {
 
   // --- WhatsApp CRM APIs ---
   let fallbackAccounts: any[] = [
-    { id: 1, name: "Marketing Line", phone: "919001234567", status: "connected", user_id: "admin", qr_code: null, created_at: new Date().toISOString() },
+    { id: 1, name: "Official Line (7307433714)", phone: "7307433714", status: "connected", user_id: "admin", qr_code: null, created_at: new Date().toISOString() },
     { id: 2, name: "Customer Support Team", phone: null, status: "disconnected", user_id: "admin", qr_code: null, created_at: new Date().toISOString() }
   ];
   let fallbackCampaigns: any[] = [
@@ -1905,20 +2003,28 @@ function startServer() {
     res.json({ success: true, message: "Direct message sent successfully!" });
   });
 
+  app.post("/api/whatsapp/run-auto-greetings-scan", async (req, res) => {
+    try {
+      await whatsappEngine.checkAndSendAutomatedGreetings();
+      res.json({ success: true, message: "Automated birthday & wedding anniversary greetings checked and sent successfully!" });
+    } catch (err: any) {
+      console.error("[SCAN-API] Error manual trigger automated greetings:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    (async () => {
-      try {
-        const { createServer: createViteServer } = await import("vite");
-        const vite = await createViteServer({
-          server: { middlewareMode: true },
-          appType: "spa",
-        });
-        app.use(vite.middlewares);
-      } catch (err) {
-        console.error("Failed to load Vite middleware", err);
-      }
-    })();
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (err) {
+      console.error("Failed to load Vite middleware", err);
+    }
   } else {
     if (!process.env.VERCEL) {
       app.use(express.static(path.join(process.cwd(), "dist")));

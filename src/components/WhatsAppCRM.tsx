@@ -156,6 +156,7 @@ export default function WhatsAppCRM({
         if (phoneIndex === -1 && headers.length > 0) phoneIndex = 0;
         if (nameIndex === -1 && headers.length > 1) nameIndex = 1;
 
+        const allEntries = [...hospitalEntries, ...dairyEntries];
         const parsed: { name: string; phone: string }[] = [];
         for (let i = 1; i < data.length; i++) {
           const row = data[i] as any[];
@@ -165,7 +166,14 @@ export default function WhatsAppCRM({
           const nameVal = nameIndex !== -1 ? String(row[nameIndex] || "").trim() : "";
 
           const phoneClean = phoneVal.replace(/\D/g, "");
-          const nameClean = nameVal || `Customer ${phoneClean.slice(-4)}`;
+
+          // Autofetch match by phone from our CRM database
+          const matchedEntry = allEntries.find(e => {
+            const cleanE = String(e.phone || "").replace(/\D/g, "");
+            return cleanE.length >= 8 && (phoneClean.endsWith(cleanE) || cleanE.endsWith(phoneClean));
+          });
+
+          const nameClean = matchedEntry ? matchedEntry.name : (nameVal || `Customer ${phoneClean.slice(-4)}`);
 
           if (phoneClean.length >= 9) {
             parsed.push({ name: nameClean, phone: phoneClean });
@@ -606,7 +614,14 @@ export default function WhatsAppCRM({
         fetch(`/api/media/${activeModule}`),
         fetch("/api/whatsapp/docs")
       ]);
-      if (accRes.ok) setAccounts(await accRes.json());
+      if (accRes.ok) {
+        const loadedAccs = await accRes.json();
+        setAccounts(loadedAccs);
+        const connected = loadedAccs.find((a: any) => a.status === "connected") || loadedAccs[0];
+        if (connected && !campaignAccount) {
+          setCampaignAccount(String(connected.id));
+        }
+      }
       if (campRes.ok) setCampaigns(await campRes.json());
       if (logsRes.ok) setLogs(await logsRes.json());
       if (mediaRes.ok) setMediaItems(await mediaRes.json());
@@ -638,14 +653,14 @@ export default function WhatsAppCRM({
       return {
         id: fallbackAcc.id,
         name: fallbackAcc.name,
-        phone: fallbackAcc.phone || "919001234567",
+        phone: fallbackAcc.phone || "7307433714",
         status: fallbackAcc.status
       };
     }
     return {
       id: 1,
-      name: "Marketing Line",
-      phone: "919001234567",
+      name: "Official Line (7307433714)",
+      phone: "7307433714",
       status: "connected"
     };
   };
@@ -981,12 +996,20 @@ export default function WhatsAppCRM({
     // Parses name and number separated by commas or newlines
     const rows = importText.split("\n");
     const parsed: { name: string; phone: string }[] = [];
+    const allEntries = [...hospitalEntries, ...dairyEntries];
+
     rows.forEach(row => {
       const parts = row.split(",");
       if (parts.length >= 1) {
         const phoneClean = parts[0].replace(/\D/gs, "");
-        const nameClean = parts[1] ? parts[1].trim() : `Customer ${phoneClean.slice(-4)}`;
         if (phoneClean.length >= 9) {
+          // Autofetch match by phone
+          const matchedEntry = allEntries.find(e => {
+            const cleanE = String(e.phone || "").replace(/\D/g, "");
+            return cleanE.length >= 8 && (phoneClean.endsWith(cleanE) || cleanE.endsWith(phoneClean));
+          });
+
+          const nameClean = matchedEntry ? matchedEntry.name : (parts[1] ? parts[1].trim() : `Customer ${phoneClean.slice(-4)}`);
           parsed.push({ name: nameClean, phone: phoneClean });
         }
       }
@@ -1056,10 +1079,11 @@ export default function WhatsAppCRM({
       return;
     }
 
-    let finalMessage = directMessage;
+    const cleanDirectMessage = directMessage.replace(/\{\{name\}\}/gi, directName);
+    let finalMessage = cleanDirectMessage;
 
     if (selectedDocType === "invoice") {
-      finalMessage = `🧾 *INVOICE DOCUMENT*\nReference: ${docReference}\nTo: ${directName}\nItem: ${docItems}\nAmount: Rs. ${docAmount}\nTax included: Rs. ${docTax}\nStatus: *PENDING PAYMENT*\n\n${directMessage}`;
+      finalMessage = `🧾 *INVOICE DOCUMENT*\nReference: ${docReference}\nTo: ${directName}\nItem: ${docItems}\nAmount: Rs. ${docAmount}\nTax included: Rs. ${docTax}\nStatus: *PENDING PAYMENT*\n\n${cleanDirectMessage}`;
     } else if (selectedDocType === "receipt") {
       finalMessage = `✅ *PAYMENT RECEIPT*\nRef Check: ${docReference}\nFrom: ${directName}\nService: ${docItems}\nPaid sum: Rs. ${docAmount}\nTax deduction: Rs. ${docTax}\nStatus: *SUCCESSFULLY COMPLETED*\n\nThank you for choosing us!`;
     } else if (selectedDocType === "birthday_card") {
@@ -1067,7 +1091,7 @@ export default function WhatsAppCRM({
         toast.error("Please select or upload a birthday/celebration card media to send.");
         return;
       }
-      finalMessage = `🎉 *CELEBRATION MESSAGE*\nFrom: Shri Krishna ${activeModule} Admin\nTo: ${directName}\nGreetings: ${directMessage || "Happy Birthday / Anniversary! Wishing you endless bliss and premium success."}`;
+      finalMessage = `🎉 *CELEBRATION MESSAGE*\nFrom: Shri Krishna ${activeModule} Admin\nTo: ${directName}\nGreetings: ${cleanDirectMessage || "Happy Birthday / Anniversary! Wishing you endless bliss and premium success."}`;
     }
 
     try {
@@ -1082,7 +1106,7 @@ export default function WhatsAppCRM({
           amount: selectedDocType === "invoice" || selectedDocType === "receipt" ? docAmount : null,
           items: selectedDocType === "invoice" || selectedDocType === "receipt" ? docItems : null,
           reference: selectedDocType === "invoice" || selectedDocType === "receipt" ? docReference : null,
-          message: directMessage
+          message: cleanDirectMessage
         })
       });
 
@@ -1152,6 +1176,7 @@ export default function WhatsAppCRM({
 
   // Antiban Score calculations
   const getAntibanSafety = (delay: number) => {
+    if (delay === 0) return { text: "Instant Bulk Mode (At One Go) 🚀", color: "text-blue-600 bg-blue-50 border-blue-200" };
     if (delay >= 15) return { text: "Ultra-Safe Protection", color: "text-emerald-600 bg-emerald-50 border-emerald-200" };
     if (delay >= 8) return { text: "Optimal Secure Limit", color: "text-emerald-500 bg-emerald-50/50 border-emerald-100" };
     if (delay >= 4) return { text: "Average Risk Threshold", color: "text-amber-600 bg-amber-50 border-amber-200" };
@@ -1160,8 +1185,8 @@ export default function WhatsAppCRM({
 
   // UI Calculation metrics
   const totalMessages = logs.length;
-  const sentSuccessful = logs.filter(l => l.status === "delivered" || l.status === "sent").length;
-  const sentFailed = logs.filter(l => l.status === "failed").length;
+  const sentSuccessful = logs.filter(l => l.status === "delivered" || l.status === "sent" || l.status === "seen" || l.status === "unseen" || l.status === "read").length;
+  const sentFailed = logs.filter(l => l.status === "failed" || l.status === "blocked").length;
   const completionRate = totalMessages ? Math.round((sentSuccessful / totalMessages) * 100) : 100;
   const liveChannels = accounts.filter(a => a.status === "connected").length;
 
@@ -1695,74 +1720,76 @@ export default function WhatsAppCRM({
                   initial={{ scale: 0.95 }}
                   animate={{ scale: 1 }}
                   exit={{ scale: 0.95 }}
-                  className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative space-y-5 text-center"
+                  className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] flex flex-col p-6 shadow-2xl relative text-center"
                 >
                   <button 
                     onClick={() => handleCancelConnection(generatingQRFor)}
-                    className="absolute right-4 top-4 p-1 hover:bg-zinc-100 rounded-lg text-zinc-400"
+                    className="absolute right-4 top-4 p-1 hover:bg-zinc-100 rounded-lg text-zinc-400 z-10"
                   >
                     <X size={20} />
                   </button>
 
-                  <div>
+                  <div className="flex-none pb-2">
                     <h3 className="font-bold text-zinc-900 text-lg">WhatsApp QR Pair Tool</h3>
                     <p className="text-zinc-400 text-[10px] uppercase font-bold tracking-wider mt-0.5">Sandbox Integration Channel</p>
                   </div>
                   
-                  {pairingQR ? (
-                    <div className="space-y-4">
-                      {/* Sandbox Explainer Banner */}
-                      <div className="bg-amber-50/75 border border-amber-200/60 p-3.5 rounded-xl text-left text-xs text-amber-800 space-y-1.5 shadow-sm">
-                        <div className="flex items-center gap-1.5 font-bold text-amber-900">
-                          <span>💡 Sandbox Environment Notice</span>
+                  <div className="flex-1 overflow-y-auto space-y-5 py-2 pr-1 text-center select-none scrollbar-thin">
+                    {pairingQR ? (
+                      <div className="space-y-4">
+                        {/* Sandbox Explainer Banner */}
+                        <div className="bg-amber-50/75 border border-amber-200/60 p-3.5 rounded-xl text-left text-xs text-amber-800 space-y-1.5 shadow-sm">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                            <span>💡 Sandbox Environment Notice</span>
+                          </div>
+                          <p className="leading-relaxed text-[11px] text-amber-800/90">
+                            Because this is a safe, sandboxed preview application built to test and design features without risking real WhatsApp cell number blocks/bans, the QR scanning flow is fully simulated.
+                          </p>
+                          <p className="leading-relaxed text-[11px] font-semibold text-amber-900">
+                            To bind your desired WhatsApp phone number, please enter it in the "Instant Link" section below instead!
+                          </p>
                         </div>
-                        <p className="leading-relaxed text-[11px] text-amber-800/90">
-                          Because this is a safe, sandboxed preview application built to test and design features without risking real WhatsApp cell number blocks/bans, the QR scanning flow is fully simulated.
-                        </p>
-                        <p className="leading-relaxed text-[11px] font-semibold text-amber-900">
-                          To bind your desired WhatsApp phone number, please enter it in the "Instant Link" section below instead!
-                        </p>
-                      </div>
 
-                      <div className="bg-zinc-50 border border-zinc-100 p-4 rounded-xl flex flex-col items-center justify-center">
-                        <img src={pairingQR} className="w-48 h-48 border bg-white rounded shadow-sm object-contain" alt="Scan pairing token" referrerPolicy="no-referrer" />
-                        <p className="text-zinc-500 text-xs font-medium mt-2 max-w-xs leading-relaxed">
-                          Simulated Baileys pairing QR token generated.
-                        </p>
-                      </div>
+                        <div className="bg-zinc-50 border border-zinc-100 p-4 rounded-xl flex flex-col items-center justify-center">
+                          <img src={pairingQR} className="w-48 h-48 border bg-white rounded shadow-sm object-contain" alt="Scan pairing token" referrerPolicy="no-referrer" />
+                          <p className="text-zinc-500 text-xs font-medium mt-2 max-w-xs leading-relaxed">
+                            Simulated Baileys pairing QR token generated.
+                          </p>
+                        </div>
 
-                      <div className="border-t border-zinc-100 pt-4 text-left space-y-2">
-                        <label className="block text-zinc-700 text-xs font-bold">Or Pair Manually (Instant Link)</label>
-                        <p className="text-zinc-400 text-[11px] leading-relaxed">
-                          Enter your WhatsApp phone number below to instantly mock the scanner and pair this connection channel.
-                        </p>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text" 
-                            placeholder="e.g. 919876543210"
-                            className="flex-1 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-mono"
-                            value={manualPairPhone}
-                            onChange={(e) => setManualPairPhone(e.target.value)}
-                          />
-                          <button 
-                            type="button"
-                            disabled={isManualPairing}
-                            onClick={() => handleManualLink(generatingQRFor, manualPairPhone)}
-                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-                          >
-                            {isManualPairing ? "Pairing..." : "Link Number"}
-                          </button>
+                        <div className="border-t border-zinc-100 pt-4 text-left space-y-2">
+                          <label className="block text-zinc-700 text-xs font-bold">Or Pair Manually (Instant Link)</label>
+                          <p className="text-zinc-400 text-[11px] leading-relaxed">
+                            Enter your WhatsApp phone number below to instantly mock the scanner and pair this connection channel.
+                          </p>
+                          <div className="flex gap-2 font-sans">
+                            <input 
+                              type="text" 
+                              placeholder="e.g. 919876543210"
+                              className="flex-1 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-mono"
+                              value={manualPairPhone}
+                              onChange={(e) => setManualPairPhone(e.target.value)}
+                            />
+                            <button 
+                              type="button"
+                              disabled={isManualPairing}
+                              onClick={() => handleManualLink(generatingQRFor, manualPairPhone)}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                            >
+                              {isManualPairing ? "Pairing..." : "Link Number"}
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="py-20 flex flex-col items-center justify-center space-y-3">
-                      <Loader2 size={36} className="animate-spin text-emerald-600" />
-                      <p className="text-sm font-semibold text-zinc-600">Spawning Baileys pairing session...</p>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="py-20 flex flex-col items-center justify-center space-y-3">
+                        <Loader2 size={36} className="animate-spin text-emerald-600" />
+                        <p className="text-sm font-semibold text-zinc-600">Spawning Baileys pairing session...</p>
+                      </div>
+                    )}
+                  </div>
 
-                  <div className="flex gap-2 border-t border-zinc-100 pt-4">
+                  <div className="flex gap-2 border-t border-zinc-100 pt-4 flex-none">
                     <button 
                       onClick={() => generatingQRFor && startConnectionFlow(generatingQRFor)}
                       className="flex-1 py-2 border border-zinc-200 hover:bg-zinc-50 rounded-xl text-xs text-zinc-600 font-bold transition-all"
@@ -1862,6 +1889,33 @@ export default function WhatsAppCRM({
                 />
               </div>
 
+              {/* Real-time Dynamic Preview with autofetched name replacement */}
+              <div className="bg-emerald-50/40 border border-emerald-100 p-4 rounded-2xl space-y-1.5 animate-fade-in">
+                <span className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-widest flex items-center gap-1">
+                  <Sparkles size={11} className="text-emerald-500 animate-pulse" />
+                  Live Campaign Preview (Autofetched Personalization)
+                </span>
+                <div className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic break-words">
+                  {campaignTemplate ? (
+                    (() => {
+                      const sampleContact = campaignContacts[0] || (hospitalEntries && hospitalEntries[0]) || (dairyEntries && dairyEntries[0]) || { name: "Valued Client" };
+                      return campaignTemplate.replace(/\{\{name\}\}/gi, sampleContact.name || "Customer");
+                    })()
+                  ) : (
+                    <span className="text-zinc-400 italic">No message drafted. Type a template above...</span>
+                  )}
+                </div>
+                <div className="text-[9px] text-zinc-400 font-semibold tracking-wide">
+                  {campaignContacts.length > 0 ? (
+                    <span className="text-emerald-600 block">
+                      ✓ First target matching index: Replaced <strong className="font-mono">"{{name}}"</strong> with contact <strong className="font-mono">"{campaignContacts[0].name}"</strong>.
+                    </span>
+                  ) : (
+                    "✓ Replaces the {{name}} tag dynamically with the recipient's matched/imported name during campaign execution."
+                  )}
+                </div>
+              </div>
+
               {/* Anti-ban Rate Limit Configuration */}
               <div className="space-y-3 bg-zinc-50/50 p-4 rounded-xl border border-dashed border-zinc-200">
                 <div className="flex items-center justify-between">
@@ -1878,14 +1932,14 @@ export default function WhatsAppCRM({
                 <div className="flex items-center gap-4">
                   <input 
                     type="range" 
-                    min={2} 
+                    min={0} 
                     max={60} 
                     className="flex-1 accent-emerald-600 cursor-pointer"
                     value={campaignDelay}
                     onChange={(e) => setCampaignDelay(parseInt(e.target.value))}
                   />
                   <span className="text-sm font-bold font-mono text-zinc-800 w-16 text-right">
-                    {campaignDelay} secs
+                    {campaignDelay === 0 ? "Instant (0s)" : `${campaignDelay} secs`}
                   </span>
                 </div>
               </div>
@@ -2877,13 +2931,13 @@ export default function WhatsAppCRM({
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
             {[
               { id: "all", label: "All Dispatches", count: logs.length, colorClass: "border-zinc-200 hover:border-zinc-400 bg-white text-zinc-900", activeClass: "ring-2 ring-zinc-900 border-zinc-900 bg-zinc-50" },
-              { id: "sent", label: "Sent Message", count: logs.filter(l => l.status === "sent").length, colorClass: "border-blue-100 hover:border-blue-300 bg-blue-50/20 text-blue-950", activeClass: "ring-2 ring-blue-500 border-blue-400 bg-blue-50/60" },
-              { id: "delivered", label: "Delivered", count: logs.filter(l => l.status === "delivered" || l.status === "seen" || l.status === "unseen").length, colorClass: "border-teal-100 hover:border-teal-300 bg-teal-50/20 text-teal-950", activeClass: "ring-2 ring-teal-500 border-teal-400 bg-teal-50/60" },
-              { id: "seen", label: "Seen by Client", count: logs.filter(l => l.status === "seen").length, colorClass: "border-emerald-100 hover:border-emerald-300 bg-emerald-50/20 text-emerald-950", activeClass: "ring-2 ring-emerald-500 border-emerald-400 bg-emerald-50/60" },
+              { id: "sent", label: "Sent Message", count: logs.filter(l => l.status === "sent" || l.status === "delivered" || l.status === "seen" || l.status === "unseen" || l.status === "read").length, colorClass: "border-blue-100 hover:border-blue-300 bg-blue-50/20 text-blue-950", activeClass: "ring-2 ring-blue-500 border-blue-400 bg-blue-50/60" },
+              { id: "delivered", label: "Delivered", count: logs.filter(l => l.status === "delivered" || l.status === "seen" || l.status === "unseen" || l.status === "read").length, colorClass: "border-teal-100 hover:border-teal-300 bg-teal-50/20 text-teal-950", activeClass: "ring-2 ring-teal-500 border-teal-400 bg-teal-50/60" },
+              { id: "seen", label: "Seen by Client", count: logs.filter(l => l.status === "seen" || l.status === "read").length, colorClass: "border-emerald-100 hover:border-emerald-300 bg-emerald-50/20 text-emerald-950", activeClass: "ring-2 ring-emerald-500 border-emerald-400 bg-emerald-50/60" },
               { id: "unseen", label: "Not See (Unseen)", count: logs.filter(l => l.status === "unseen").length, colorClass: "border-amber-100 hover:border-amber-300 bg-amber-50/20 text-amber-950", activeClass: "ring-2 ring-amber-500 border-amber-400 bg-amber-50/60" },
-              { id: "queued", label: "Queued (Buffer)", count: logs.filter(l => l.status === "queued" || l.status === "pending").length, colorClass: "border-indigo-100 hover:border-indigo-300 bg-indigo-50/20 text-indigo-950", activeClass: "ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50/60" },
+              { id: "queued", label: "Queued (Buffer)", count: logs.filter(l => l.status === "queued" || l.status === "pending" || l.status === "processing").length, colorClass: "border-indigo-100 hover:border-indigo-300 bg-indigo-50/20 text-indigo-950", activeClass: "ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50/60" },
               { id: "deleted", label: "Deleted", count: logs.filter(l => l.status === "deleted").length, colorClass: "border-pink-100 hover:border-pink-300 bg-pink-50/20 text-pink-950", activeClass: "ring-2 ring-pink-500 border-pink-400 bg-pink-50/60" },
-              { id: "blocked", label: "Blocked Number", count: logs.filter(l => l.status === "blocked").length, colorClass: "border-rose-100 hover:border-rose-300 bg-rose-50/20 text-rose-950", activeClass: "ring-2 ring-rose-500 border-rose-400 bg-rose-50/60" }
+              { id: "blocked", label: "Blocked Number", count: logs.filter(l => l.status === "blocked" || l.status === "failed").length, colorClass: "border-rose-100 hover:border-rose-300 bg-rose-50/20 text-rose-950", activeClass: "ring-2 ring-rose-500 border-rose-400 bg-rose-50/60" }
             ].map((kpi) => {
               const isActive = reportsFilter === kpi.id;
               const percent = logs.length > 0 ? Math.round((kpi.count / logs.length) * 100) : 0;
@@ -3248,19 +3302,19 @@ export default function WhatsAppCRM({
 
                     // Segment by report cards
                     if (reportsFilter === "sent") {
-                      filtered = filtered.filter(l => l.status === "sent");
+                      filtered = filtered.filter(l => l.status === "sent" || l.status === "delivered" || l.status === "seen" || l.status === "unseen" || l.status === "read");
                     } else if (reportsFilter === "delivered") {
-                      filtered = filtered.filter(l => l.status === "delivered" || l.status === "seen" || l.status === "unseen");
+                      filtered = filtered.filter(l => l.status === "delivered" || l.status === "seen" || l.status === "unseen" || l.status === "read");
                     } else if (reportsFilter === "seen") {
-                      filtered = filtered.filter(l => l.status === "seen");
+                      filtered = filtered.filter(l => l.status === "seen" || l.status === "read");
                     } else if (reportsFilter === "unseen") {
                       filtered = filtered.filter(l => l.status === "unseen");
                     } else if (reportsFilter === "queued") {
-                      filtered = filtered.filter(l => l.status === "queued" || l.status === "pending");
+                      filtered = filtered.filter(l => l.status === "queued" || l.status === "pending" || l.status === "processing");
                     } else if (reportsFilter === "deleted") {
                       filtered = filtered.filter(l => l.status === "deleted");
                     } else if (reportsFilter === "blocked") {
-                      filtered = filtered.filter(l => l.status === "blocked");
+                      filtered = filtered.filter(l => l.status === "blocked" || l.status === "failed");
                     }
 
                     // Segment by sender channel

@@ -240,6 +240,97 @@ const UP_DISTRICTS_DATA: Record<string, { blocks: string[], cities: string[] }> 
   }
 };
 
+// --- Address Extraction & Parsing Fallbacks for Messy Data ---
+
+interface ExtractedAddress {
+  village: string;
+  post: string;
+  block: string;
+  district: string;
+  pincode: string;
+  state: string;
+}
+
+const extractAddressComponents = (e: any): ExtractedAddress => {
+  if (!e) {
+    return { village: '', post: '', block: '', district: '', pincode: '', state: '' };
+  }
+
+  const res = {
+    village: String(e.village || '').trim(),
+    post: String(e.post || '').trim(),
+    block: String(e.block || '').trim(),
+    district: String(e.district || '').trim(),
+    pincode: String(e.pincode || '').trim(),
+    state: String(e.state || '').trim()
+  };
+
+  const blockVal = String(e.block || '');
+  const villageVal = String(e.village || '');
+  const postVal = String(e.post || '');
+  const doctorVal = String(e.doctor || '');
+  
+  const candidateFields = [blockVal, villageVal, postVal, doctorVal].filter(s => {
+    const sUpper = s.toUpperCase();
+    return sUpper.includes('VILL') || sUpper.includes('POST') || sUpper.includes('DIST') || sUpper.includes('PIN');
+  });
+
+  if (candidateFields.length > 0) {
+    const fullLoc = candidateFields.reduce((longest, current) => current.length > longest.length ? current : longest, "");
+    const upperLoc = fullLoc.toUpperCase();
+
+    if (!res.pincode || res.pincode.length !== 6) {
+      const pinMatch = upperLoc.match(/PIN\s*[-:]?\s*(\d{6})/i) || fullLoc.match(/(\d{6})/);
+      if (pinMatch) {
+        res.pincode = pinMatch[1];
+      }
+    }
+
+    if (!res.district) {
+      if (upperLoc.includes("GONDA")) res.district = "Gonda";
+      else if (upperLoc.includes("BASTI")) res.district = "Basti";
+      else if (upperLoc.includes("SANT KABIR") || upperLoc.includes("SANT KABITR") || upperLoc.includes("KHALILABAD")) res.district = "Sant Kabir Nagar";
+      else if (upperLoc.includes("SIDDHARTH")) res.district = "Siddharthnagar";
+      else {
+        const distMatch = upperLoc.match(/DIST\s*[-:]?\s*([A-Z\s]+)/i);
+        if (distMatch) {
+          res.district = distMatch[1].split(',')[0].split('PIN')[0].trim();
+        }
+      }
+    }
+
+    if (!res.post) {
+      const postMatch = upperLoc.match(/POST\s*[-:]?\s*([A-Z\s]+)/i) || upperLoc.match(/THANA\s*[-:]?\s*([A-Z\s]+)/i);
+      if (postMatch) {
+        res.post = postMatch[1].split(',')[0].split('DIST')[0].split('PIN')[0].trim();
+      }
+    }
+
+    if (!res.village) {
+      const villMatch = upperLoc.match(/VILL\s*[-:]?\s*([A-Z\s]+)/i);
+      if (villMatch) {
+        res.village = villMatch[1].split(',')[0].split('POST')[0].split('DIST')[0].trim();
+      }
+    }
+
+    if (res.block.includes(',') || res.block.toUpperCase().includes('VILL') || res.block.toUpperCase().includes('POST')) {
+      const blockMatch = upperLoc.match(/BLOCK\s*[-:]?\s*([A-Z\s]+)/i);
+      if (blockMatch) {
+        res.block = blockMatch[1].split(',')[0].trim();
+      } else {
+        res.block = "";
+      }
+    }
+  }
+
+  if (res.district && res.district.toLowerCase() === 'gonda') res.district = 'Gonda';
+  if (res.district && res.district.toLowerCase() === 'basti') res.district = 'Basti';
+  if (res.district && res.district.toLowerCase() === 'sant kabir nagar') res.district = 'Sant Kabir Nagar';
+  if (res.district && res.district.toLowerCase() === 'siddharthnagar') res.district = 'Siddharthnagar';
+
+  return res;
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -418,6 +509,8 @@ export default function App() {
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [editingStaff, setEditingStaff] = useState<any>(null);
   const [viewPasswordId, setViewPasswordId] = useState<number | null>(null);
+  const [isSendingBulk, setIsSendingBulk] = useState(false);
+  const [isScanningGreetings, setIsScanningGreetings] = useState(false);
   const [settings, setSettings] = useState<any>({
     institution_name: 'Shri Krishna Mission Hospital',
     contact_number: '91 9918922900',
@@ -707,6 +800,117 @@ export default function App() {
     pincode: '',
     search: ''
   });
+
+  // Helper to get districts filtered by selected state
+  const getAvailableDistricts = (stateName: string) => {
+    if (!stateName) {
+      // Return all unique districts from all sources if no state selected
+      const all = new Set<string>();
+      districtMasterList.forEach(d => { if (d.name) all.add(d.name); });
+      Object.keys(UP_DISTRICTS_DATA).forEach(d => all.add(d));
+      const safeHosp = Array.isArray(hospitalEntries) ? hospitalEntries : [];
+      const safeDairy = Array.isArray(dairyEntries) ? dairyEntries : [];
+      [...safeHosp, ...safeDairy].forEach(e => {
+        if (e.district) all.add(e.district);
+      });
+      return Array.from(all).sort();
+    }
+
+    const stateLower = stateName.toLowerCase();
+    const matched = new Set<string>();
+
+    // 1. From districtMasterList
+    districtMasterList.forEach(d => {
+      if (d.state && d.state.toLowerCase() === stateLower && d.name) {
+        matched.add(d.name);
+      }
+    });
+
+    // 2. From hardcoded UP_DISTRICTS_DATA if selected state is Uttar Pradesh
+    if (stateLower === "uttar pradesh") {
+      Object.keys(UP_DISTRICTS_DATA).forEach(d => matched.add(d));
+    }
+
+    // 3. From hospital & dairy entries
+    const safeHosp = Array.isArray(hospitalEntries) ? hospitalEntries : [];
+    const safeDairy = Array.isArray(dairyEntries) ? dairyEntries : [];
+    [...safeHosp, ...safeDairy].forEach(e => {
+      const entryState = (e as any).state || '';
+      if (entryState.toLowerCase() === stateLower && e.district) {
+        matched.add(e.district);
+      }
+    });
+
+    return Array.from(matched).sort();
+  };
+
+  // Helper to get blocks filtered by selected district
+  const getAvailableBlocks = (districtName: string, stateName: string) => {
+    if (!districtName) {
+      // Return all blocks of the selected state if district is empty but state is selected
+      const all = new Set<string>();
+      if (stateName) {
+        const allowedDistricts = getAvailableDistricts(stateName);
+        blockMasterList.forEach(b => {
+          if (b.district && allowedDistricts.includes(b.district) && b.name) {
+            all.add(b.name);
+          }
+        });
+        allowedDistricts.forEach(dist => {
+          if (UP_DISTRICTS_DATA[dist]) {
+            UP_DISTRICTS_DATA[dist].blocks.forEach(b => all.add(b));
+          }
+        });
+        const safeHosp = Array.isArray(hospitalEntries) ? hospitalEntries : [];
+        const safeDairy = Array.isArray(dairyEntries) ? dairyEntries : [];
+        [...safeHosp, ...safeDairy].forEach(e => {
+          if (e.district && allowedDistricts.includes(e.district) && e.block) {
+            all.add(e.block);
+          }
+        });
+      } else {
+        // Return absolutely all blocks
+        blockMasterList.forEach(b => { if (b.name) all.add(b.name); });
+        Object.keys(UP_DISTRICTS_DATA).forEach(dist => {
+          UP_DISTRICTS_DATA[dist].blocks.forEach(b => all.add(b));
+        });
+        const safeHosp = Array.isArray(hospitalEntries) ? hospitalEntries : [];
+        const safeDairy = Array.isArray(dairyEntries) ? dairyEntries : [];
+        [...safeHosp, ...safeDairy].forEach(e => {
+          if (e.block) all.add(e.block);
+        });
+      }
+      return Array.from(all).sort();
+    }
+
+    const distLower = districtName.toLowerCase();
+    const matched = new Set<string>();
+
+    // 1. From blockMasterList
+    blockMasterList.forEach(b => {
+      if (b.district && b.district.toLowerCase() === distLower && b.name) {
+        matched.add(b.name);
+      }
+    });
+
+    // 2. From UP_DISTRICTS_DATA
+    const upKey = Object.keys(UP_DISTRICTS_DATA).find(k => k.toLowerCase() === distLower);
+    if (upKey && UP_DISTRICTS_DATA[upKey]) {
+      UP_DISTRICTS_DATA[upKey].blocks.forEach(b => matched.add(b));
+    }
+
+    // 3. From entries (hospital & dairy entries)
+    const safeHosp = Array.isArray(hospitalEntries) ? hospitalEntries : [];
+    const safeDairy = Array.isArray(dairyEntries) ? dairyEntries : [];
+    [...safeHosp, ...safeDairy].forEach(e => {
+      const entryDist = e.district || '';
+      if (entryDist.toLowerCase() === distLower && e.block) {
+        matched.add(e.block);
+      }
+    });
+
+    return Array.from(matched).sort();
+  };
 
   // Form States
   const [showAddModal, setShowAddModal] = useState(false);
@@ -1367,9 +1571,17 @@ export default function App() {
     reader.readAsArrayBuffer(importingFile);
   };
 
+  // Synchronize data fetch when active module/tab changes, with automatic polling for real-time updates
   useEffect(() => {
     fetchData();
-  }, [activeModule]);
+
+    // Auto-update database counts and campaign logs periodically in the background (every 15 seconds)
+    const intervalId = setInterval(() => {
+      fetchData();
+    }, 15000);
+
+    return () => clearInterval(intervalId);
+  }, [activeModule, activeTab]);
 
   useEffect(() => {
     setSelectedEntryIds([]);
@@ -1983,25 +2195,26 @@ export default function App() {
     if (cleanPhone.length === 10) {
       cleanPhone = '91' + cleanPhone;
     }
+    const cleanMessage = (message || '').replace(/\{\{name\}\}/gi, name || 'Customer');
     const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
 
     if (selectedMedia) {
       try {
-        await navigator.clipboard.writeText(message);
+        await navigator.clipboard.writeText(cleanMessage);
         toast.success("Message copied to clipboard!");
       } catch (err) {
         // Fallback
       }
     }
 
-    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(cleanMessage)}`;
 
     if (selectedMedia) {
       // Open the beautiful attachment guide overlay in App.tsx!
       setAttachmentGuide({
         phone: cleanPhone,
         name: name,
-        message: message,
+        message: cleanMessage,
         media: selectedMedia
       });
     } else {
@@ -2020,12 +2233,84 @@ export default function App() {
         module: activeModule,
         recipient_name: name,
         recipient_phone: phone,
-        message,
+        message: cleanMessage,
         status: 'Sent',
         action_type: selectedMedia ? 'Share' : 'Send',
         media_name: selectedMedia?.name || null
       })
     });
+    fetchData();
+  };
+
+  const triggerAutomatedGreetingsScan = async () => {
+    setIsScanningGreetings(true);
+    try {
+      const res = await fetch("/api/whatsapp/run-auto-greetings-scan", { method: "POST" });
+      if (res.ok) {
+        toast.success("Autopilot scan successful! Anyone celebrating today has been greeted.");
+      } else {
+        toast.error("Autopilot scan failed to trigger.");
+      }
+    } catch (err) {
+      console.error("Autopilot scan error:", err);
+      toast.error("Check network status or server connection.");
+    } finally {
+      setIsScanningGreetings(false);
+      fetchData();
+    }
+  };
+
+  const handleBulkGreet = async (type: 'Birthday' | 'Anniversary' | 'Both') => {
+    const birthdays = type === 'Anniversary' ? [] : getBirthdayBoys();
+    const anniversaries = type === 'Birthday' ? [] : getAnniversaryFolks();
+
+    const bdayTemplate = templates.find(t => t.type === 'Birthday') || { content: "Wishing you a very Happy Birthday, {{name}}! 🎂🎉" };
+    const annivTemplate = templates.find(t => t.type === 'Anniversary') || { content: "Wishing you a very Happy Anniversary, {{name}}! 💍✨" };
+
+    const targets = [
+      ...birthdays.map(p => ({
+        name: p.name,
+        phone: p.phone,
+        message: bdayTemplate.content.replace(/\{\{name\}\}/gi, p.name),
+        type: 'Birthday'
+      })),
+      ...anniversaries.map(p => ({
+        name: p.name,
+        phone: p.phone,
+        message: annivTemplate.content.replace(/\{\{name\}\}/gi, p.name),
+        type: 'Anniversary'
+      }))
+    ];
+
+    if (targets.length === 0) {
+      toast("No recipients celebrating today.");
+      return;
+    }
+
+    setIsSendingBulk(true);
+    let successCount = 0;
+
+    for (const target of targets) {
+      try {
+        const res = await fetch("/api/whatsapp/send-direct", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: target.name,
+            phone: target.phone,
+            message: target.message
+          })
+        });
+        if (res.ok) {
+          successCount++;
+        }
+      } catch (err) {
+        console.error("Error sending bulk greeting:", err);
+      }
+    }
+
+    setIsSendingBulk(false);
+    toast.success(`Sent ${successCount} of ${targets.length} personalized greetings successfully!`);
     fetchData();
   };
 
@@ -2243,11 +2528,18 @@ export default function App() {
   );
 
   const filteredReportEntries = (Array.isArray(activeModule === 'Hospital' ? hospitalEntries : dairyEntries) ? (activeModule === 'Hospital' ? hospitalEntries : dairyEntries) : []).filter(e => {
-    const s = reportFilters;
+    const s = appliedReportFilters;
+    const addr = extractAddressComponents(e);
+
     const name = String(e.name || '').trim().toLowerCase();
     const phone = String(e.phone || '').trim();
-    const village = String(e.village || '').trim().toLowerCase();
-    
+    const village = String(e.village || addr.village || '').trim().toLowerCase();
+    const post = String((e as any).post || addr.post || '').trim().toLowerCase();
+    const state = String(e.state || addr.state || '').trim().toLowerCase();
+    const district = String(e.district || addr.district || '').trim().toLowerCase();
+    const block = String(e.block || addr.block || '').trim().toLowerCase();
+    const pincode = String(e.pincode || addr.pincode || '').trim();
+
     const searchVal = String(s.search || '').trim().toLowerCase();
     const villageVal = String(s.village || '').trim().toLowerCase();
     const postVal = String(s.post || '').trim().toLowerCase();
@@ -2260,12 +2552,14 @@ export default function App() {
       name.includes(searchVal) || 
       phone.includes(searchVal);
     
-    const matchesVillage = !villageVal || village.includes(villageVal);
-    const matchesPost = !postVal || String((e as HospitalEntry).post || '').trim().toLowerCase().includes(postVal);
-    const matchesState = !stateVal || String(e.state || '').trim().toLowerCase().includes(stateVal);
-    const matchesDistrict = !districtVal || String(e.district || '').trim().toLowerCase().includes(districtVal);
-    const matchesBlock = !blockVal || String(e.block || '').trim().toLowerCase().includes(blockVal);
-    const matchesPincode = !pincodeVal || String(e.pincode || '').trim().includes(pincodeVal);
+    const fullText = `${e.name || ''} ${e.phone || ''} ${e.village || ''} ${e.block || ''} ${(e as any).post || ''} ${e.district || ''} ${e.state || ''} ${e.pincode || ''} ${(e as any).doctor || ''}`.toLowerCase();
+
+    const matchesVillage = !villageVal || village.includes(villageVal) || fullText.includes(villageVal);
+    const matchesPost = !postVal || post.includes(postVal) || fullText.includes(postVal);
+    const matchesState = !stateVal || state.includes(stateVal) || fullText.includes(stateVal);
+    const matchesDistrict = !districtVal || district.includes(districtVal) || fullText.includes(districtVal);
+    const matchesBlock = !blockVal || block.includes(blockVal) || fullText.includes(blockVal);
+    const matchesPincode = !pincodeVal || pincode.includes(pincodeVal) || fullText.includes(pincodeVal);
     
     return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
   });
@@ -2273,8 +2567,23 @@ export default function App() {
   const getContactForLog = React.useCallback((phone: string) => {
     const cleanPh = String(phone || '').replace(/\D/g, '');
     if (!cleanPh) return null;
-    const entries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
-    return entries.find(e => {
+    
+    // Check primary active module entries first
+    const primaryEntries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
+    const foundPrimary = primaryEntries.find(e => {
+      const cleanE = String(e.phone || '').replace(/\D/g, '');
+      if (!cleanE) return false;
+      if (cleanPh === cleanE) return true;
+      if (cleanPh.length >= 10 && cleanE.length >= 10) {
+        return cleanPh.slice(-10) === cleanE.slice(-10);
+      }
+      return false;
+    });
+    if (foundPrimary) return foundPrimary;
+
+    // Fallback to checking secondary module entries
+    const secondaryEntries = activeModule === 'Hospital' ? dairyEntries : hospitalEntries;
+    return secondaryEntries.find(e => {
       const cleanE = String(e.phone || '').replace(/\D/g, '');
       if (!cleanE) return false;
       if (cleanPh === cleanE) return true;
@@ -2287,17 +2596,18 @@ export default function App() {
 
   const filteredMessageLogs = React.useMemo(() => {
     return (Array.isArray(logs) ? logs : []).filter(log => {
-      const s = reportFilters;
+      const s = appliedReportFilters;
       const contact = getContactForLog(log.recipient_phone);
+      const addr = extractAddressComponents(contact);
       
       const name = String(contact ? contact.name : (log.recipient_name || '')).trim().toLowerCase();
       const phone = String(log.recipient_phone || '').trim();
-      const village = String(contact ? contact.village : '').trim().toLowerCase();
-      const post = String(contact ? (contact as HospitalEntry).post || '' : '').trim().toLowerCase();
-      const state = String(contact ? (contact as HospitalEntry).state || '' : '').trim().toLowerCase();
-      const district = String(contact ? (contact as HospitalEntry).district || '' : '').trim().toLowerCase();
-      const block = String(contact ? (contact as HospitalEntry).block || '' : '').trim().toLowerCase();
-      const pincode = String(contact ? (contact as HospitalEntry).pincode || '' : '').trim();
+      const village = String(contact ? (contact.village || addr.village) : '').trim().toLowerCase();
+      const post = String(contact ? ((contact as HospitalEntry).post || addr.post) : '').trim().toLowerCase();
+      const state = String(contact ? (contact.state || addr.state) : '').trim().toLowerCase();
+      const district = String(contact ? (contact.district || addr.district) : '').trim().toLowerCase();
+      const block = String(contact ? (contact.block || addr.block) : '').trim().toLowerCase();
+      const pincode = String(contact ? (contact.pincode || addr.pincode) : '').trim();
 
       const searchVal = String(s.search || '').trim().toLowerCase();
       const villageVal = String(s.village || '').trim().toLowerCase();
@@ -2311,16 +2621,18 @@ export default function App() {
         name.includes(searchVal) || 
         phone.includes(searchVal);
       
-      const matchesVillage = !villageVal || village.includes(villageVal);
-      const matchesPost = !postVal || post.includes(postVal);
-      const matchesState = !stateVal || state.includes(stateVal);
-      const matchesDistrict = !districtVal || district.includes(districtVal);
-      const matchesBlock = !blockVal || block.includes(blockVal);
-      const matchesPincode = !pincodeVal || pincode.includes(pincodeVal);
+      const fullText = `${name} ${phone} ${village} ${block} ${post} ${district} ${state} ${pincode}`.toLowerCase();
+
+      const matchesVillage = !villageVal || village.includes(villageVal) || fullText.includes(villageVal);
+      const matchesPost = !postVal || post.includes(postVal) || fullText.includes(postVal);
+      const matchesState = !stateVal || state.includes(stateVal) || fullText.includes(stateVal);
+      const matchesDistrict = !districtVal || district.includes(districtVal) || fullText.includes(districtVal);
+      const matchesBlock = !blockVal || block.includes(blockVal) || fullText.includes(blockVal);
+      const matchesPincode = !pincodeVal || pincode.includes(pincodeVal) || fullText.includes(pincodeVal);
       
       return matchesSearch && matchesVillage && matchesPost && matchesState && matchesDistrict && matchesBlock && matchesPincode;
     });
-  }, [logs, reportFilters, getContactForLog]);
+  }, [logs, appliedReportFilters, getContactForLog]);
 
   const ageGroupDistribution = React.useMemo(() => {
     const entries = filteredReportEntries;
@@ -2669,12 +2981,6 @@ export default function App() {
             onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
           />
         )}
-        <SidebarItem 
-          icon={FileText} 
-          label="User Manual" 
-          active={activeTab === 'manual'} 
-          onClick={() => { setActiveTab('manual'); setIsSidebarOpen(false); }} 
-        />
         <SidebarItem icon={LogOut} label="Logout" onClick={() => setUser(null)} />
       </div>
     </>
@@ -2781,7 +3087,6 @@ export default function App() {
                 {activeTab === 'posts' && 'Post Office Wise Statistics'}
                 {activeTab === 'upload-data' && 'Import Data'}
                 {activeTab === 'export-data' && 'Export Data Hub'}
-                {activeTab === 'manual' && 'User Manual & Guides'}
               </h2>
               <p className="text-sm text-zinc-500">Welcome back, {user.username}</p>
             </div>
@@ -2984,7 +3289,19 @@ export default function App() {
                 </Card>
 
                 <Card className="p-6">
-                  <h3 className="font-bold text-zinc-900 mb-6">Today's Reminders</h3>
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-bold text-zinc-900">Today's Reminders</h3>
+                    {(getBirthdayBoys().length > 0 || getAnniversaryFolks().length > 0) && (
+                      <Button
+                        size="sm"
+                        disabled={isSendingBulk}
+                        onClick={() => handleBulkGreet('Both')}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1.5 text-xs rounded-xl"
+                      >
+                        {isSendingBulk ? "Sending..." : "✨ Greet All in 1-Click"}
+                      </Button>
+                    )}
+                  </div>
                   <div className="space-y-4">
                     {getBirthdayBoys().length === 0 && getAnniversaryFolks().length === 0 ? (
                       <div className="text-center py-12">
@@ -3395,19 +3712,120 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-6"
             >
+              {/* Autopilot Auto-Greeting Engine Control Banner */}
+              <Card className="p-6 border-zinc-200/80 bg-zinc-50 shadow-sm rounded-2xl">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-zinc-900 flex items-center gap-2">
+                      <span className="text-xl">🤖</span> Autopilot Birthday & Anniversary Greeting Engine
+                    </h3>
+                    <p className="text-xs text-zinc-500">
+                      Even if you or your admin forget to greet, the engine automatically checks the registry every day to dispatch beautifully personalized wishes.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isScanningGreetings}
+                      onClick={triggerAutomatedGreetingsScan}
+                      className="text-xs font-semibold bg-white text-zinc-700 border-zinc-200 shadow-sm rounded-xl cursor-pointer hover:bg-zinc-100 flex items-center gap-1.5"
+                    >
+                      {isScanningGreetings ? "Running Scan..." : "♻️ Trigger Scan Now"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={isSendingBulk}
+                      onClick={() => handleBulkGreet('Both')}
+                      className="text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md rounded-xl cursor-pointer flex items-center gap-1.5"
+                    >
+                      {isSendingBulk ? "Sending..." : "✨ Bulk Greet Everyone (1-Click)"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6 pt-6 border-t border-zinc-200/60">
+                  <div className="flex items-center justify-between p-3.5 bg-white border border-zinc-200/60 rounded-xl">
+                    <div>
+                      <p className="text-sm font-bold text-zinc-800">Auto Birthday Wishes</p>
+                      <p className="text-[11px] text-zinc-400">Scans and dispatches on birthdays automatically</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const newSettings = { ...settings, auto_birthday: !settings.auto_birthday };
+                        setSettings(newSettings);
+                        await fetch(`/api/settings/${activeModule}`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(newSettings)
+                        });
+                        toast.success(`Auto-Birthday Greetings ${newSettings.auto_birthday ? "ENABLED" : "DISABLED"}`);
+                      }}
+                      className={cn(
+                        "w-12 h-6 rounded-full p-1 transition-colors duration-200 cursor-pointer",
+                        settings.auto_birthday ? "bg-emerald-500" : "bg-zinc-200"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200",
+                        settings.auto_birthday ? "translate-x-6" : "translate-x-0"
+                      )} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3.5 bg-white border border-zinc-200/60 rounded-xl">
+                    <div>
+                      <p className="text-sm font-bold text-zinc-800">Auto Anniversary Greetings</p>
+                      <p className="text-[11px] text-zinc-400">Scans and dispatches on wedding anniversaries automatically</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const newSettings = { ...settings, auto_anniversary: !settings.auto_anniversary };
+                        setSettings(newSettings);
+                        await fetch(`/api/settings/${activeModule}`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(newSettings)
+                        });
+                        toast.success(`Auto-Anniversary Greetings ${newSettings.auto_anniversary ? "ENABLED" : "DISABLED"}`);
+                      }}
+                      className={cn(
+                        "w-12 h-6 rounded-full p-1 transition-colors duration-200 cursor-pointer",
+                        settings.auto_anniversary ? "bg-emerald-500" : "bg-zinc-200"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200",
+                        settings.auto_anniversary ? "translate-x-6" : "translate-x-0"
+                      )} />
+                    </button>
+                  </div>
+                </div>
+              </Card>
+
               {/* Today's Automation Reminders */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Card className="p-6 bg-gradient-to-br from-emerald-50/50 to-white border-emerald-100">
-                  <div className="flex items-center justify-between mb-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                     <h3 className="font-bold text-zinc-900 flex items-center gap-2">
                        <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center">
-                         <Calendar size={18} />
+                          <Calendar size={18} />
                        </div>
                        Today's Birthdays
+                       <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">
+                         {getBirthdayBoys().length}
+                       </span>
                     </h3>
-                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">
-                      {getBirthdayBoys().length} Events
-                    </span>
+                    {getBirthdayBoys().length > 0 && (
+                      <Button
+                        size="sm"
+                        disabled={isSendingBulk}
+                        onClick={() => handleBulkGreet('Birthday')}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl self-start sm:self-center cursor-pointer"
+                      >
+                        {isSendingBulk ? "Sending..." : "✨ Greet All Birthdays"}
+                      </Button>
+                    )}
                   </div>
                   <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                     {getBirthdayBoys().length === 0 ? (
@@ -3438,16 +3856,26 @@ export default function App() {
                 </Card>
 
                 <Card className="p-6 bg-gradient-to-br from-purple-50/50 to-white border-purple-100">
-                  <div className="flex items-center justify-between mb-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                     <h3 className="font-bold text-zinc-900 flex items-center gap-2">
                        <div className="w-8 h-8 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center">
-                         <Heart size={18} />
+                          <Heart size={18} />
                        </div>
                        Today's Anniversaries
+                       <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
+                         {getAnniversaryFolks().length}
+                       </span>
                     </h3>
-                    <span className="text-xs font-bold text-purple-600 bg-purple-50 px-2 py-1 rounded-full">
-                      {getAnniversaryFolks().length} Events
-                    </span>
+                    {getAnniversaryFolks().length > 0 && (
+                      <Button
+                        size="sm"
+                        disabled={isSendingBulk}
+                        onClick={() => handleBulkGreet('Anniversary')}
+                        className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl self-start sm:self-center cursor-pointer"
+                      >
+                        {isSendingBulk ? "Sending..." : "✨ Greet All Anniversaries"}
+                      </Button>
+                    )}
                   </div>
                   <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                     {getAnniversaryFolks().length === 0 ? (
@@ -4039,7 +4467,7 @@ export default function App() {
                       <select 
                         className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white"
                         value={reportFilters.state}
-                        onChange={(e) => setReportFilters({ ...reportFilters, state: e.target.value })}
+                        onChange={(e) => setReportFilters({ ...reportFilters, state: e.target.value, district: '', block: '' })}
                       >
                         <option value="">Select State</option>
                         {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -4047,23 +4475,29 @@ export default function App() {
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-zinc-900">District</label>
-                      <input 
-                        type="text" 
-                        placeholder="District"
-                        className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      <select 
+                        className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white"
                         value={reportFilters.district}
-                        onChange={(e) => setReportFilters({ ...reportFilters, district: e.target.value })}
-                      />
+                        onChange={(e) => setReportFilters({ ...reportFilters, district: e.target.value, block: '' })}
+                      >
+                        <option value="">Select District</option>
+                        {getAvailableDistricts(reportFilters.state).map(d => (
+                          <option key={d} value={d}>{d}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-zinc-900">Block</label>
-                      <input 
-                        type="text" 
-                        placeholder="Block"
-                        className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                      <select 
+                        className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-white"
                         value={reportFilters.block}
                         onChange={(e) => setReportFilters({ ...reportFilters, block: e.target.value })}
-                      />
+                      >
+                        <option value="">Select Block</option>
+                        {getAvailableBlocks(reportFilters.district, reportFilters.state).map(b => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold text-zinc-900">Pincode</label>
@@ -4162,6 +4596,13 @@ export default function App() {
 
                         return filteredReportEntries.map((entry) => {
                           const isDuplicate = reportPhoneCount[entry.phone] > 1;
+                          const addr = extractAddressComponents(entry);
+                          const dispVillage = entry.village || addr.village || '-';
+                          const dispBlock = (entry.block && !entry.block.includes(',') && !entry.block.includes('VILL-')) ? entry.block : (addr.block || '-');
+                          const dispDistrict = entry.district || addr.district || '-';
+                          const dispPost = (entry as HospitalEntry).post || addr.post || '-';
+                          const dispPincode = entry.pincode || addr.pincode || '-';
+
                           return (
                             <tr key={entry.id} className={`hover:bg-zinc-50/50 transition-all group ${isDuplicate ? 'bg-amber-50/30' : ''}`}>
                               <td className="px-6 py-4 text-sm font-medium text-zinc-900 border-l-2 border-transparent group-hover:border-zinc-900">
@@ -4190,12 +4631,12 @@ export default function App() {
                               <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.dob || '-'}</td>
                               <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.anniversary || '-'}</td>
                               <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.age || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.village || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.block || '-'}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{dispVillage}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{dispBlock}</td>
                               <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{(entry as HospitalEntry).department || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.district || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{(entry as HospitalEntry).post || '-'}</td>
-                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{entry.pincode || '-'}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{dispDistrict}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{dispPost}</td>
+                              <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{dispPincode}</td>
                               <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{(entry as HospitalEntry).doctor || '-'}</td>
                               <td className="px-6 py-4 sticky right-0 bg-white shadow-[-8px_0_12px_-4px_rgba(0,0,0,0.1)] md:static md:shadow-none min-w-[140px] z-10 text-right">
                                 <div className="flex items-center justify-end gap-1">
@@ -4823,7 +5264,7 @@ export default function App() {
                     <select 
                       className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all bg-white font-sans"
                       value={reportFilters.state}
-                      onChange={(e) => setReportFilters({ ...reportFilters, state: e.target.value })}
+                      onChange={(e) => setReportFilters({ ...reportFilters, state: e.target.value, district: '', block: '' })}
                     >
                       <option value="">Select State</option>
                       {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -4831,23 +5272,29 @@ export default function App() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-zinc-900">District</label>
-                    <input 
-                      type="text" 
-                      placeholder="District"
-                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                    <select 
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all bg-white font-sans"
                       value={reportFilters.district}
-                      onChange={(e) => setReportFilters({ ...reportFilters, district: e.target.value })}
-                    />
+                      onChange={(e) => setReportFilters({ ...reportFilters, district: e.target.value, block: '' })}
+                    >
+                      <option value="">Select District</option>
+                      {getAvailableDistricts(reportFilters.state).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-zinc-900">Block</label>
-                    <input 
-                      type="text" 
-                      placeholder="Block"
-                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all font-sans"
+                    <select 
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all bg-white font-sans"
                       value={reportFilters.block}
                       onChange={(e) => setReportFilters({ ...reportFilters, block: e.target.value })}
-                    />
+                    >
+                      <option value="">Select Block</option>
+                      {getAvailableBlocks(reportFilters.district, reportFilters.state).map(b => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-bold text-zinc-900">Pincode</label>
@@ -4930,7 +5377,16 @@ export default function App() {
                            <td className="px-6 py-4 text-sm text-zinc-600">{entry.age}</td>
                          )}
                          <td className="px-6 py-4 text-sm text-zinc-600">
-                           {entry.village} - {(entry as any).post || '-'} - {entry.block} - {entry.district} - {entry.state} - {entry.pincode}
+                           {(() => {
+                               const addr = extractAddressComponents(entry);
+                              const dispVillage = entry.village || addr.village || '-';
+                              const dispBlock = (entry.block && !entry.block.includes(',') && !entry.block.includes('VILL-')) ? entry.block : (addr.block || '-');
+                              const dispDistrict = entry.district || addr.district || '-';
+                              const dispPost = (entry as HospitalEntry).post || addr.post || '-';
+                              const dispPincode = entry.pincode || addr.pincode || '-';
+                              const dispState = entry.state || addr.state || '-';
+                              return `${dispVillage} - ${dispPost} - ${dispBlock} - ${dispDistrict} - ${dispState} - ${dispPincode}`;
+                             })()}
                          </td>
                          <td className="px-6 py-4 text-sm text-zinc-600">
                            {activeModule === 'Dairy' ? 'Verified' : (entry as HospitalEntry).doctor || '-'}
@@ -5460,7 +5916,7 @@ Example format:
           </motion.div>
         )}
 
-        {activeTab === 'manual' && (
+        {false && (
           <motion.div
             key="manual"
             initial={{ opacity: 0, y: 15 }}
@@ -6009,36 +6465,46 @@ Example format:
                     </div>
 
                     <div className="space-y-8">
-                      <div className="space-y-4">
-                        <p className="text-sm font-medium text-zinc-600">Auto Birthday Message</p>
-                        <div 
-                          onClick={() => setSettings({ ...settings, auto_birthday: !settings.auto_birthday })}
-                          className={cn(
-                            "w-12 h-6 rounded-full relative cursor-pointer transition-all duration-300",
-                            settings.auto_birthday ? "bg-emerald-500" : "bg-zinc-200"
-                          )}
-                        >
-                          <div className={cn(
-                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 shadow-sm",
-                            settings.auto_birthday ? "translate-x-7" : "translate-x-1"
-                          )}></div>
+                      <div className="space-y-3 bg-zinc-50 p-4 rounded-xl border border-zinc-100">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-zinc-700">Auto Birthday Wishes</p>
+                          <div 
+                            onClick={() => setSettings({ ...settings, auto_birthday: !settings.auto_birthday })}
+                            className={cn(
+                              "w-12 h-6 rounded-full relative cursor-pointer transition-all duration-300",
+                              settings.auto_birthday ? "bg-emerald-500" : "bg-zinc-200"
+                            )}
+                          >
+                            <div className={cn(
+                              "absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 shadow-sm",
+                              settings.auto_birthday ? "translate-x-7" : "translate-x-1"
+                            )}></div>
+                          </div>
                         </div>
+                        <p className="text-xs text-zinc-500 leading-relaxed">
+                          Automatically scan the registry every day and send personalized WhatsApp wishes on pre-recorded birthdays.
+                        </p>
                       </div>
 
-                      <div className="space-y-4">
-                        <p className="text-sm font-medium text-zinc-600">Auto Anniversary Message</p>
-                        <div 
-                          onClick={() => setSettings({ ...settings, auto_anniversary: !settings.auto_anniversary })}
-                          className={cn(
-                            "w-12 h-6 rounded-full relative cursor-pointer transition-all duration-300",
-                            settings.auto_anniversary ? "bg-emerald-500" : "bg-zinc-200"
-                          )}
-                        >
-                          <div className={cn(
-                            "absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 shadow-sm",
-                            settings.auto_anniversary ? "translate-x-7" : "translate-x-1"
-                          )}></div>
+                      <div className="space-y-3 bg-zinc-50 p-4 rounded-xl border border-zinc-100">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold text-zinc-700">Auto Anniversary Wishes</p>
+                          <div 
+                            onClick={() => setSettings({ ...settings, auto_anniversary: !settings.auto_anniversary })}
+                            className={cn(
+                              "w-12 h-6 rounded-full relative cursor-pointer transition-all duration-300",
+                              settings.auto_anniversary ? "bg-emerald-500" : "bg-zinc-200"
+                            )}
+                          >
+                            <div className={cn(
+                              "absolute top-1 w-4 h-4 bg-white rounded-full transition-all duration-300 shadow-sm",
+                              settings.auto_anniversary ? "translate-x-7" : "translate-x-1"
+                            )}></div>
+                          </div>
                         </div>
+                        <p className="text-xs text-zinc-500 leading-relaxed">
+                          Automatically detect wedding anniversaries on pre-recorded dates and send wishing greetings on autopilot.
+                        </p>
                       </div>
                     </div>
                   </div>
