@@ -91,38 +91,250 @@ export class WhatsAppEngine {
     this.startAutomatedGreetingsScheduler();
   }
 
-  // Generate simulated Baileys QR code for scanning
-  public triggerConnectionFlow(accountId: string, io: Server) {
-    console.log(`Starting connection flow for WhatsApp Account #${accountId}`);
-    io.emit(`whatsapp:connecting:${accountId}`, { status: "connecting", message: "Initializing Baileys session..." });
+  // Retrieve the active WhatsApp API Key from Supabase settings
+  public async getActiveAPIKey(): Promise<string | null> {
+    const envKey = process.env.WHATSAPP_API_KEY || process.env.META_WHATSAPP_API_KEY;
+    if (envKey && envKey.trim().length > 5) {
+      return envKey.trim();
+    }
+    if (!isSupabaseConfigured()) return null;
+    try {
+      const { data, error } = await supabase
+        .from("settings")
+        .select("whatsapp_api_key")
+        .not("whatsapp_api_key", "is", null);
 
-    // Cancel existing pairing flow if any
+      if (error || !data) return null;
+      for (const row of data) {
+        if (row.whatsapp_api_key && row.whatsapp_api_key.trim().length > 5) {
+          return row.whatsapp_api_key.trim();
+        }
+      }
+    } catch (e) {
+      console.error("[WHATSAPP-ENGINE] Error reading api key from database settings:", e);
+    }
+    return null;
+  }
+
+  // Dispatch a message programmatically via Meta's Official WhatsApp Cloud API
+  public async sendMetaCloudAPI(apiKey: string, phone: string, text: string, mediaDataUrl: string | null = null): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    let cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+      cleanPhone = cleanPhone.substring(1);
+    }
+    if (cleanPhone.length === 10) {
+      cleanPhone = '91' + cleanPhone; // Fallback to country code 91
+    }
+
+    let accessToken = "";
+    let phoneNumberId = "";
+    
+    // Parse credential format: ACCESS_TOKEN;PHONE_NUMBER_ID or ACCESS_TOKEN:PHONE_NUMBER_ID
+    if (apiKey.includes(';') || apiKey.includes(':')) {
+      const parts = apiKey.split(/[;:]/);
+      accessToken = parts[0].trim();
+      phoneNumberId = parts[1].trim();
+    } else {
+      console.warn(`[WHATSAPP-ENGINE] Provided API Key missing PHONE_NUMBER_ID separator (; or :). Operating in high-fidelity mock mode.`);
+      return { 
+        success: false, 
+        error: "Missing PHONE_NUMBER_ID separator. Format must be 'ACCESS_TOKEN;PHONE_NUMBER_ID' to send programmatically." 
+      };
+    }
+
+    try {
+      console.log(`[WHATSAPP-ENGINE OUTBOUND] Dispatching to Meta Cloud API -> Recipient: ${cleanPhone}, Phone ID: ${phoneNumberId}`);
+      const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+      
+      const payload: any = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanPhone,
+        type: "text",
+        text: {
+          preview_url: false,
+          body: text
+        }
+      };
+
+      if (mediaDataUrl) {
+        if (mediaDataUrl.startsWith("http")) {
+          payload.type = "image";
+          payload.image = {
+            link: mediaDataUrl,
+            caption: text
+          };
+          delete payload.text;
+        } else {
+          console.warn("[WHATSAPP-ENGINE] Attachment is embedded Base64 stream, not a standard public link. Appending message footnote instead.");
+          payload.text.body = text + "\n\n(Attachment card available inside your dashboard)";
+        }
+      }
+
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const resText = await response.text();
+      let resJson: any = {};
+      try {
+        resJson = JSON.parse(resText);
+      } catch (e) {
+        resJson = { raw: resText };
+      }
+
+      console.log(`[WHATSAPP-ENGINE INBOUND] Meta Cloud API Status: ${response.status}`, resJson);
+
+      if (response.status === 200 && (resJson.messages || resJson.success)) {
+        return { 
+          success: true, 
+          messageId: resJson.messages?.[0]?.id || "meta-msg-id-" + Date.now() 
+        };
+      } else {
+        const errMsg = resJson.error?.message || resJson.error || JSON.stringify(resJson);
+        return { 
+          success: false, 
+          error: `Status ${response.status}: ${errMsg}` 
+        };
+      }
+    } catch (err: any) {
+      console.error("[WHATSAPP-ENGINE NET ERROR] Graph API dispatch failed:", err);
+      return { 
+        success: false, 
+        error: err.message || "Network request connection refused" 
+      };
+    }
+  }
+
+  // Real-time verification of Meta credentials against the Graph API
+  public async verifyMetaCredentials(apiKey: string): Promise<{ success: boolean; phone?: string; name?: string; error?: string }> {
+    if (!apiKey || (!apiKey.includes(';') && !apiKey.includes(':'))) {
+      return { 
+        success: false, 
+        error: "Invalid credential format. API key must be strictly in the format 'ACCESS_TOKEN;PHONE_NUMBER_ID'" 
+      };
+    }
+    const parts = apiKey.split(/[;:]/);
+    const accessToken = parts[0].trim();
+    const phoneNumberId = parts[1].trim();
+
+    try {
+      console.log(`[WHATSAPP-ENGINE] Actively verifying credentials with Meta Graph API for Phone Number ID: ${phoneNumberId}`);
+      console.log("API KEY FOUND: Verifying access token...");
+      const url = `https://graph.facebook.com/v18.0/${phoneNumberId}?access_token=${accessToken}`;
+      
+      const response = await fetch(url);
+      const resText = await response.text();
+      let resJson: any = {};
+      try {
+        resJson = JSON.parse(resText);
+      } catch (e) {
+        resJson = { raw: resText };
+      }
+
+      console.log(`[WHATSAPP-ENGINE] Meta Credentials Probing Status Code: ${response.status}`);
+      console.log("Meta Response", resJson);
+
+      if (response.status === 200 && resJson.id) {
+        return {
+          success: true,
+          phone: resJson.display_phone_number || "917307433714",
+          name: resJson.verified_name || "Meta Business App"
+        };
+      } else {
+        const errMsg = resJson.error?.message || resJson.error || JSON.stringify(resJson);
+        console.error(`Delivery Failure Reason: Meta verification rejected with message: ${errMsg}`);
+        return {
+          success: false,
+          error: `Meta Validation Rejected (Status ${response.status}): ${errMsg}`
+        };
+      }
+    } catch (err: any) {
+      console.error("[WHATSAPP-ENGINE] Network transport error while validating credentials:", err);
+      return {
+        success: false,
+        error: `Network error verifying Meta credentials: ${err.message || err}`
+      };
+    }
+  }
+
+  // Real Meta Cloud API connection validator
+  public async triggerConnectionFlow(accountId: string, io: Server) {
+    console.log(`Starting real Meta Cloud API connection flow for WhatsApp Account #${accountId}`);
+    io.emit(`whatsapp:connecting:${accountId}`, { status: "connecting", message: "Connecting to Meta Graph API..." });
+
+    // Cancel existing pairing timer if any is running
     this.cancelConnectionFlow(accountId);
 
-    // Step 1: Send QR Code instantly
-    const simulatedQR = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=baileys-session-pairing-token-acc-${accountId}-ts-${Date.now()}`;
-    
-    // Emit and update status
-    setTimeout(async () => {
-      io.emit(`whatsapp:qr:${accountId}`, { qr: simulatedQR, message: "Scan QR with your WhatsApp" });
-      await this.updateAccountStatus(accountId, "connecting", simulatedQR);
-    }, 500);
+    const apiKey = await this.getActiveAPIKey();
+    if (!apiKey) {
+      const errorMsg = "No Meta WhatsApp Cloud API credentials found. Please set your credentials (ACCESS_TOKEN;PHONE_NUMBER_ID) in Settings first.";
+      console.warn(`[WHATSAPP-ENGINE] Account connection failed: ${errorMsg}`);
+      io.emit(`whatsapp:connecting:${accountId}`, { 
+        status: "disconnected", 
+        message: errorMsg 
+      });
+      await supabase
+        .from("whatsapp_accounts")
+        .update({ 
+          status: "disconnected", 
+          qr_code: null,
+          phone: null,
+          session_data: JSON.stringify({ error: errorMsg, updatedAt: new Date().toISOString() })
+        })
+        .eq("id", accountId);
+      return;
+    }
 
-    // Step 2: Set a timeout for automatic mock pairing success after 120 seconds (2 minutes of scan time)
-    // This gives them ample time, and avoids auto-closing in 20 seconds.
-    const timeout = setTimeout(async () => {
-      const mockPhone = "7307433714";
-      console.log(`WhatsApp pairing automatic fallback successful on account #${accountId} to: ${mockPhone}`);
+    const verification = await this.verifyMetaCredentials(apiKey);
+    if (verification.success) {
+      const phoneNo = verification.phone || "917307433714";
+      const displayName = verification.name || "Meta Business App";
+      console.log(`[WHATSAPP-ENGINE] API verify success: Display Name = ${displayName}, Phone = ${phoneNo}`);
+      
       io.emit(`whatsapp:connected:${accountId}`, {
         status: "connected",
-        phone: mockPhone,
-        message: "WhatsApp connected successfully!"
+        phone: phoneNo,
+        name: displayName,
+        message: "Meta WhatsApp Cloud API verified & connected successfully!"
       });
-      await this.updateAccountStatus(accountId, "connected", null, mockPhone);
-      this.connectionIntervals.delete(accountId);
-    }, 120000); // 120 seconds (2 minutes)
-
-    this.connectionIntervals.set(accountId, timeout);
+      
+      await supabase
+        .from("whatsapp_accounts")
+        .update({ 
+          status: "connected", 
+          phone: phoneNo,
+          qr_code: null,
+          session_data: JSON.stringify({
+            authToken: "verified-meta-token-session",
+            pairedAt: new Date().toISOString(),
+            phone: phoneNo,
+            verified_name: displayName
+          })
+        })
+        .eq("id", accountId);
+    } else {
+      const errorMsg = verification.error || "Meta Credentials validation rejected by Graph API";
+      console.error(`[WHATSAPP-ENGINE] API verify failed: ${errorMsg}`);
+      io.emit(`whatsapp:connecting:${accountId}`, { 
+        status: "disconnected", 
+        message: `Validation failed: ${errorMsg}` 
+      });
+      await supabase
+        .from("whatsapp_accounts")
+        .update({ 
+          status: "disconnected", 
+          qr_code: null,
+          phone: null,
+          session_data: JSON.stringify({ error: errorMsg, updatedAt: new Date().toISOString() })
+        })
+        .eq("id", accountId);
+    }
   }
 
   public cancelConnectionFlow(accountId: string) {
@@ -130,7 +342,7 @@ export class WhatsAppEngine {
     if (timer) {
       clearTimeout(timer);
       this.connectionIntervals.delete(accountId);
-      console.log(`Connection flow cancelled for WhatsApp Account #${accountId}`);
+      console.log(`Connection flow lifecycle closed for WhatsApp Account #${accountId}`);
     }
   }
 
@@ -141,7 +353,7 @@ export class WhatsAppEngine {
       if (phone) {
         updatePayload.phone = phone;
         updatePayload.session_data = JSON.stringify({
-          authToken: "mock-baileys-credentials-token",
+          authToken: "verified-meta-token-session",
           pairedAt: new Date().toISOString(),
           phone
         });
@@ -156,7 +368,7 @@ export class WhatsAppEngine {
   }
 
   // Bulk Messaging Campaign Dispatch with Anti-ban Logic and Rate Limiter
-  public async launchCampaign(campaignId: string, contacts: any[], messageTemplate: string, delaySeconds: number, attachment: { name: string, type: string, data: string } | null = null) {
+  public async launchCampaign(campaignId: string, contacts: any[], messageTemplate: string, delaySeconds: number, attachment: { name: string, type: string, data: string, url?: string } | null = null) {
     if (this.activeCampaigns.has(campaignId)) {
       console.log(`Campaign ${campaignId} is already running.`);
       return;
@@ -191,24 +403,28 @@ export class WhatsAppEngine {
       // Simulate sending wait (Anti-ban logic rate limiter)
       await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
 
-      // Realistic simulation of WhatsApp delivery webhook statuses
-      const rand = Math.random();
-      let status = "delivered";
+      let status = "sent";
       let errorMsg: string | null = null;
-      let isSuccess = true;
+      let isSuccess = false;
 
-      if (rand < 0.55) {
-        status = "seen";
-      } else if (rand < 0.80) {
-        status = "unseen";
-      } else if (rand < 0.90) {
-        status = "sent";
-      } else if (rand < 0.95) {
-        status = "blocked";
-        errorMsg = "Contact blocked the WhatsApp sender line";
-        isSuccess = false;
+      // Check if real API Key exists to dispatch programmatically
+      const apiKey = await this.getActiveAPIKey();
+      if (apiKey) {
+        const mediaUrl = attachment?.url || attachment?.data || null;
+        const result = await this.sendMetaCloudAPI(apiKey, phone, personalizedMessage, mediaUrl);
+        if (result.success) {
+          status = "delivered";
+          errorMsg = null;
+          isSuccess = true;
+        } else {
+          status = "failed";
+          errorMsg = result.error || "Meta Cloud API gateway dispatch failed";
+          isSuccess = false;
+        }
       } else {
-        status = "deleted";
+        status = "failed";
+        errorMsg = "Verification failed: No Meta WhatsApp Cloud API credentials configured in settings. Please configure ACCESS_TOKEN;PHONE_NUMBER_ID first.";
+        isSuccess = false;
       }
 
       if (isSuccess) {
@@ -296,16 +512,41 @@ export class WhatsAppEngine {
         console.log(`Scheduler picked up ${data.length} pending scheduled messages.`);
         for (const msg of data) {
           // Process scheduled send
-          const isSuccess = true;
+          let status = "sent";
+          let errorMsg: string | null = null;
+          
+          const apiKey = await this.getActiveAPIKey();
+          if (apiKey) {
+            const result = await this.sendMetaCloudAPI(apiKey, msg.recipient_phone, msg.message);
+            if (result.success) {
+              status = "delivered";
+              errorMsg = null;
+            } else {
+              status = "failed";
+              errorMsg = result.error || "Meta Cloud API scheduled dispatch failed";
+            }
+          } else {
+            status = "failed";
+            errorMsg = "Verification failed: No Meta API Key configured in Settings.";
+          }
+
           await supabase
             .from("whatsapp_messages")
             .update({
-              status: isSuccess ? "sent" : "failed",
+              status,
+              error_message: errorMsg,
               sent_at: new Date().toISOString()
             })
             .eq("id", msg.id);
 
-          this.io.emit("message:scheduled:sent", { id: msg.id, recipient_name: msg.recipient_name });
+          this.io.emit("message:scheduled:sent", { 
+            id: msg.id, 
+            recipient_name: msg.recipient_name,
+            recipient_phone: msg.recipient_phone,
+            message: msg.message,
+            status,
+            error_message: errorMsg 
+          });
         }
       } catch (err) {
         console.error("Error running scheduler:", err);
@@ -520,8 +761,24 @@ export class WhatsAppEngine {
   // Low level dispatcher logging message states inside the DB or memory and emitting live UI updates
   private async logAndSendDirectGreeting(name: string, phone: string, text: string, type: string) {
     const isDb = isSupabaseConfigured();
-    const possibleStatuses = ["seen", "delivered", "sent"];
-    const simulatedStatus = possibleStatuses[Math.floor(Math.random() * possibleStatuses.length)];
+    const apiKey = await this.getActiveAPIKey();
+
+    let status = "sent";
+    let errorMsg: string | null = null;
+
+    if (apiKey) {
+      const result = await this.sendMetaCloudAPI(apiKey, phone, text);
+      if (result.success) {
+        status = "delivered";
+        errorMsg = null;
+      } else {
+        status = "failed";
+        errorMsg = result.error || "Autopilot sending rejected by Meta Cloud API";
+      }
+    } else {
+      status = "failed";
+      errorMsg = "Verification failed: No Meta API Key configured in Settings.";
+    }
 
     if (isDb) {
       try {
@@ -531,8 +788,8 @@ export class WhatsAppEngine {
             recipient_name: name,
             recipient_phone: phone,
             message: text,
-            status: simulatedStatus,
-            error_message: null,
+            status,
+            error_message: errorMsg,
             sent_at: new Date().toISOString()
           }]);
       } catch (err) {
@@ -546,7 +803,8 @@ export class WhatsAppEngine {
       recipient_name: name,
       recipient_phone: phone,
       message: text,
-      status: simulatedStatus,
+      status,
+      error_message: errorMsg,
       type
     });
   }

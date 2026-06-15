@@ -334,6 +334,68 @@ const extractAddressComponents = (e: any): ExtractedAddress => {
 // --- Main App ---
 
 export default function App() {
+  const resolveGeographicNames = (entry: any) => {
+    const addr = extractAddressComponents(entry);
+
+    let village = entry.village || addr.village || '-';
+    let block = (entry.block && !entry.block.includes(',') && !entry.block.includes('VILL-')) ? entry.block : (addr.block || '-');
+    let district = entry.district || addr.district || '-';
+    let post = entry.post || addr.post || '-';
+    let state = entry.state || addr.state || '-';
+    let pincode = entry.pincode || addr.pincode || '-';
+
+    // Helper to check if a value is a numeric ID
+    const isNumericId = (val: any) => {
+      if (val === null || val === undefined) return false;
+      const str = String(val).trim();
+      return str !== '' && /^\d+$/.test(str);
+    };
+
+    if (isNumericId(village)) {
+      const match = villageMasterList.find(v => String(v.id) === String(village));
+      if (match) {
+        village = match.name;
+        if (match.block) block = match.block;
+        if (match.district) district = match.district;
+        if (match.state) state = match.state;
+      }
+    }
+
+    if (isNumericId(block)) {
+      const match = blockMasterList.find(b => String(b.id) === String(block));
+      if (match) {
+        block = match.name;
+        if (match.district) district = match.district;
+      }
+    }
+
+    if (isNumericId(district)) {
+      const match = districtMasterList.find(d => String(d.id) === String(district));
+      if (match) {
+        district = match.name;
+        if (match.state) state = match.state;
+      }
+    }
+
+    if (isNumericId(post)) {
+      const match = postMasterList.find(p => String(p.id) === String(post));
+      if (match) {
+        post = match.name;
+        if (match.pincode) pincode = match.pincode;
+        if (match.district) district = match.district;
+        if (match.state) state = match.state;
+      }
+    }
+
+    if (isNumericId(state)) {
+      const match = stateMasterList.find(s => String(s.id) === String(state));
+      if (match) {
+        state = match.name;
+      }
+    }
+
+    return { village, block, district, post, state, pincode };
+  };
   useEffect(() => {
     // Disable right-click
     const handleContextMenu = (e: MouseEvent) => {
@@ -491,6 +553,10 @@ export default function App() {
   const [directMessageStatus, setDirectMessageStatus] = useState('');
   const [showAppDirectNameSuggestions, setShowAppDirectNameSuggestions] = useState(false);
   const [showAppDirectPhoneSuggestions, setShowAppDirectPhoneSuggestions] = useState(false);
+
+  // Custom multi-recipient queue systems
+  const [multiSelectedRecipients, setMultiSelectedRecipients] = useState<any[]>([]);
+  const [activeQueueIndex, setActiveQueueIndex] = useState<number | null>(null);
   const [showTemplatePicker, setShowTemplatePicker] = useState<{ phone: string, name: string, type: string } | null>(null);
   const [attachmentGuide, setAttachmentGuide] = useState<{ phone: string, name: string, message: string, media: any } | null>(null);
   const [selectedEntryIds, setSelectedEntryIds] = useState<number[]>([]);
@@ -711,6 +777,9 @@ export default function App() {
   const [newPostPincode, setNewPostPincode] = useState('');
   const [postSearch, setPostSearch] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  // Village Master State
+  const [villageMasterList, setVillageMasterList] = useState<{ id: number, state: string, district: string, block: string, name: string }[]>([]);
 
   const entries = activeModule === 'Hospital' ? hospitalEntries : dairyEntries;
   
@@ -1620,6 +1689,7 @@ export default function App() {
         { key: 'districts', url: `/api/masters/${activeModule}/district_master`, setter: setDistrictMasterList },
         { key: 'blocks', url: `/api/masters/${activeModule}/block_master`, setter: setBlockMasterList },
         { key: 'posts', url: `/api/masters/${activeModule}/post_master`, setter: setPostMasterList },
+        { key: 'villages', url: `/api/masters/${activeModule}/village_master`, setter: setVillageMasterList },
         { key: 'staff', url: `/api/staff_accounts/${activeModule}`, setter: setStaffAccounts },
       ];
 
@@ -1643,7 +1713,21 @@ export default function App() {
             const data = await res.json();
             const count = Array.isArray(data) ? data.length : (data ? 1 : 0);
             console.log(`Received ${count} records for ${ep.key}`);
-            ep.setter(data || (ep.key === 'settings' ? {} : []));
+            if (ep.key === 'settings') {
+              ep.setter((prev: any) => {
+                const merged = { ...prev };
+                if (data && typeof data === 'object') {
+                  Object.keys(data).forEach((k) => {
+                    if (data[k] !== null && data[k] !== undefined && data[k] !== '') {
+                      merged[k] = data[k];
+                    }
+                  });
+                }
+                return merged;
+              });
+            } else {
+              ep.setter(data || []);
+            }
           } else {
             console.warn(`Fetch failed for ${ep.key}: ${res.status}`);
           }
@@ -2195,7 +2279,10 @@ export default function App() {
     if (cleanPhone.length === 10) {
       cleanPhone = '91' + cleanPhone;
     }
-    const cleanMessage = (message || '').replace(/\{\{name\}\}/gi, name || 'Customer');
+    const cleanMessage = (message || '')
+      .replace(/\{\{name\}\}/gi, name || 'Customer')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
     const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
 
     if (selectedMedia) {
@@ -3946,14 +4033,128 @@ export default function App() {
               <Card className="p-6">
                 <h3 className="font-bold text-zinc-900 mb-6">Direct Messenger</h3>
                 <div className="space-y-4">
+                  {/* MULTI-RECIPIENT SELECTOR BAR FOR CELEBRANTS */}
+                  {(() => {
+                    const todayBdays = getBirthdayBoys() || [];
+                    const todayAnnivs = getAnniversaryFolks() || [];
+                    const allCelebrants = [
+                      ...todayBdays.map(p => ({ ...p, celebrationType: 'Birthday' })),
+                      ...todayAnnivs.map(p => ({ ...p, celebrationType: 'Anniversary' }))
+                    ];
+                    
+                    if (allCelebrants.length === 0) return null;
+                    
+                    const allSelected = allCelebrants.length > 0 && 
+                      allCelebrants.every(c => multiSelectedRecipients.some(r => r.phone === c.phone));
+                      
+                    return (
+                      <div className="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 mb-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5 uppercase tracking-wider">
+                              👥 Multi-Recipient Selection
+                            </h4>
+                            <p className="text-[11px] text-indigo-700 mt-0.5">Wish multiple celebrants together with auto-name matching!</p>
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (allSelected) {
+                                setMultiSelectedRecipients([]);
+                                setActiveQueueIndex(null);
+                                setDirectMessage(prev => ({ ...prev, phone: '', name: '' }));
+                                setDirectMessageStatus('');
+                              } else {
+                                setMultiSelectedRecipients(allCelebrants);
+                                setActiveQueueIndex(0);
+                                const firstCelebrant = allCelebrants[0];
+                                const relevantTemplate = templates.find(t => t.type === firstCelebrant.celebrationType) || templates[0];
+                                setDirectMessage(prev => ({
+                                  ...prev,
+                                  phone: 'Multiple Selected',
+                                  name: allCelebrants.map(item => item.name).join(', '),
+                                  templateId: relevantTemplate ? String(relevantTemplate.id) : '',
+                                  message: relevantTemplate ? relevantTemplate.content : prev.message
+                                }));
+                                setDirectMessageStatus(`👥 Queue active with ${allCelebrants.length} celebrants!`);
+                              }
+                            }}
+                            className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-white border border-indigo-200 text-indigo-800 hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
+                          >
+                            {allSelected ? "Deselect All" : `Select All (${allCelebrants.length})`}
+                          </button>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                          {allCelebrants.map((c, i) => {
+                            const isSel = multiSelectedRecipients.some(r => r.phone === c.phone);
+                            return (
+                              <div 
+                                key={i} 
+                                onClick={() => {
+                                  let updated;
+                                  if (isSel) {
+                                    updated = multiSelectedRecipients.filter(r => r.phone !== c.phone);
+                                  } else {
+                                    updated = [...multiSelectedRecipients, c];
+                                  }
+                                  setMultiSelectedRecipients(updated);
+                                  if (updated.length > 0) {
+                                    setActiveQueueIndex(0);
+                                    const firstCelebrant = updated[0];
+                                    const relevantTemplate = templates.find(t => t.type === firstCelebrant.celebrationType) || templates[0];
+                                    setDirectMessage(prev => ({
+                                      ...prev,
+                                      phone: 'Multiple Selected',
+                                      name: updated.map(item => item.name).join(', '),
+                                      templateId: relevantTemplate ? String(relevantTemplate.id) : prev.templateId,
+                                      message: relevantTemplate && (!prev.templateId || prev.templateId === '') ? relevantTemplate.content : prev.message
+                                    }));
+                                    setDirectMessageStatus(`👥 Queue active with ${updated.length} celebrants!`);
+                                  } else {
+                                    setActiveQueueIndex(null);
+                                    setDirectMessage(prev => ({ ...prev, phone: '', name: '' }));
+                                    setDirectMessageStatus('');
+                                  }
+                                }}
+                                className={`flex items-center justify-between p-2 rounded-lg border text-xs transition-all cursor-pointer ${
+                                  isSel ? 'bg-indigo-100/40 border-indigo-200 font-medium' : 'bg-white border-zinc-100 hover:bg-zinc-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all ${
+                                    isSel ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-zinc-300'
+                                  }`}>
+                                    {isSel && (
+                                      <svg className="w-2.5 h-2.5 stroke-2 stroke-current" fill="none" viewBox="0 0 24 24">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <span className="text-[12px] text-zinc-800">{c.name}</span>
+                                  <span className="text-[10px] text-zinc-400 font-mono">({c.phone})</span>
+                                </div>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100/30 font-bold text-indigo-700">
+                                  {c.celebrationType === 'Birthday' ? '🎂 Bday' : '💍 Anniv'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Recipient Phone field with relative suggestions */}
                   <div className="space-y-1.5 relative">
                     <label className="text-sm font-medium text-zinc-700">Recipient Phone</label>
                     <input 
                       type="text"
-                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all font-mono"
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all font-mono disabled:bg-zinc-100/85 disabled:text-zinc-500 disabled:border-zinc-200"
                       placeholder="919876543210" 
-                      value={directMessage.phone}
+                      value={multiSelectedRecipients.length > 0 ? "Multiple Selected" : directMessage.phone}
+                      disabled={multiSelectedRecipients.length > 0}
                       onChange={(e) => {
                         handleDirectPhoneChange(e.target.value);
                         setShowAppDirectPhoneSuggestions(true);
@@ -4009,9 +4210,10 @@ export default function App() {
                     <label className="text-sm font-medium text-zinc-700">Recipient Name</label>
                     <input 
                       type="text"
-                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all font-sans"
+                      className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900/5 focus:border-zinc-900 transition-all font-sans disabled:bg-zinc-100/85 disabled:text-zinc-500 disabled:border-zinc-200"
                       placeholder="Enter name (auto-filled on match or select)..." 
-                      value={directMessage.name}
+                      value={multiSelectedRecipients.length > 0 ? multiSelectedRecipients.map(c => c.name).join(', ') : directMessage.name}
+                      disabled={multiSelectedRecipients.length > 0}
                       onChange={(e) => {
                         handleDirectNameChange(e.target.value);
                         setShowAppDirectNameSuggestions(true);
@@ -4093,11 +4295,11 @@ export default function App() {
                     value={directMessage.templateId}
                     onChange={(e) => {
                       const t = templates.find(temp => temp.id === parseInt(e.target.value));
-                      const placeholderName = directMessage.name || 'Valued Customer';
+                      const placeholderName = multiSelectedRecipients.length > 0 ? "{{name}}" : (directMessage.name || 'Valued Customer');
                       setDirectMessage({ 
                         ...directMessage, 
                         templateId: e.target.value,
-                        message: t ? t.content.replace(/\{\{[^}]+\}\}/g, placeholderName) : directMessage.message
+                        message: t ? (multiSelectedRecipients.length > 0 ? t.content : t.content.replace(/\{\{[^}]+\}\}/g, placeholderName)) : directMessage.message
                       });
                     }}
                     options={[{ value: '', label: 'None' }, ...templates.map(t => ({ value: t.id, label: t.name }))]} 
@@ -4171,6 +4373,7 @@ export default function App() {
                         Copy
                       </button>
                     </div>
+
                     <textarea 
                       className="w-full px-4 py-2 rounded-lg border border-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-900/5 h-24 text-sm"
                       placeholder="Type your message here..."
@@ -4179,47 +4382,198 @@ export default function App() {
                       required
                     ></textarea>
                   </div>
-                  <Button 
-                    variant="secondary"
-                    onClick={async () => {
-                      if(!directMessage.message) return toast.error("Please enter a message");
+
+                  {multiSelectedRecipients.length > 0 && activeQueueIndex !== null && activeQueueIndex < multiSelectedRecipients.length ? (
+                    (() => {
+                      const currentRecipient = multiSelectedRecipients[activeQueueIndex];
+                      const currentMessage = directMessage.message.replace(/\{\{name\}\}/gi, currentRecipient.name || 'Customer');
                       const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
-                      
-                      if (selectedMedia && navigator.share) {
-                        try {
-                           const response = await fetch(selectedMedia.data);
-                           const blob = await response.blob();
-                           const file = new File([blob], selectedMedia.name, { type: selectedMedia.type });
-                           if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                             await navigator.share({
-                               files: [file],
-                               text: directMessage.message,
-                             });
-                             return;
-                           }
-                        } catch (err) {
-                           console.error("Share failed", err);
-                        }
-                      }
-                      
-                      const url = `https://wa.me/?text=${encodeURIComponent(directMessage.message)}`;
-                      window.open(url, '_blank');
-                    }}
-                    className="w-full py-3 flex items-center justify-center gap-2 mb-2"
-                  >
-                    <Share size={18} />
-                    Share Message
-                  </Button>
-                  <Button 
-                    onClick={() => {
-                      if(!directMessage.phone || !directMessage.message) return toast.error("Please fill all fields");
-                      sendWhatsApp(directMessage.phone, directMessage.message, directMessage.name || "Direct Message");
-                    }}
-                    className="w-full py-3 flex items-center justify-center gap-2"
-                  >
-                    <Send size={18} />
-                    Send Message
-                  </Button>
+
+                      return (
+                        <div className="p-4 bg-emerald-50 rounded-2xl border-2 border-emerald-100/80 space-y-3.5 my-3 animate-fade-in shadow-sm">
+                          <div className="flex items-center justify-between border-b border-emerald-100/60 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                              <h4 className="text-xs font-bold text-emerald-900 uppercase tracking-widest">
+                                Queue: {activeQueueIndex + 1} of {multiSelectedRecipients.length}
+                              </h4>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMultiSelectedRecipients([]);
+                                setActiveQueueIndex(null);
+                                setDirectMessage(prev => ({ ...prev, phone: '', name: '' }));
+                                setDirectMessageStatus('');
+                                toast("Queue disbanded");
+                              }}
+                              className="text-[10px] font-bold text-red-600 bg-red-50 hover:bg-red-100 px-2 py-0.5 rounded-full border border-red-200 transition-colors cursor-pointer"
+                            >
+                              Exit Queue
+                            </button>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-[13px] font-bold text-zinc-800">{currentRecipient.name}</span>
+                              <span className="text-xs font-mono text-zinc-500 font-semibold">{currentRecipient.phone}</span>
+                            </div>
+                            <div className="p-3 bg-white border border-emerald-100/50 rounded-xl max-h-36 overflow-y-auto mt-1">
+                              <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-wider mb-1">Message Preview:</p>
+                              <p className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic whitespace-pre-wrap">
+                                {currentMessage}
+                              </p>
+                            </div>
+                          </div>
+
+                          {selectedMedia && (
+                            <div className="p-2.5 bg-blue-50/60 border border-blue-100 rounded-xl flex items-center gap-2">
+                              <span className="text-lg">🖼️</span>
+                              <div>
+                                <p className="text-[10px] font-bold text-blue-800 uppercase tracking-wide">Media Attached</p>
+                                <p className="text-[11px] text-blue-700 font-semibold truncate max-w-[200px]">{selectedMedia.name}</p>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <Button
+                              type="button"
+                              onClick={() => {
+                                if (activeQueueIndex < multiSelectedRecipients.length - 1) {
+                                  setActiveQueueIndex(activeQueueIndex + 1);
+                                  toast.success("Skipped to next recipient");
+                                } else {
+                                  toast("Reached end of queue!");
+                                  setMultiSelectedRecipients([]);
+                                  setActiveQueueIndex(null);
+                                  setDirectMessage(prev => ({ ...prev, phone: '', name: '' }));
+                                  setDirectMessageStatus('');
+                                }
+                              }}
+                              variant="secondary"
+                              className="text-xs font-bold h-11 bg-zinc-100 text-zinc-700 hover:bg-zinc-200 border border-zinc-200 flex items-center justify-center gap-1.5 rounded-xl cursor-pointer"
+                            >
+                              Skip
+                            </Button>
+                            
+                            <Button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(currentMessage);
+                                  toast.success(`Copied message for ${currentRecipient.name}!`);
+                                } catch (err) {
+                                  console.error("Copy failed:", err);
+                                }
+
+                                if (selectedMedia && navigator.share) {
+                                  try {
+                                    const response = await fetch(selectedMedia.data);
+                                    const blob = await response.blob();
+                                    const file = new File([blob], selectedMedia.name, { type: selectedMedia.type });
+                                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                                      await navigator.share({
+                                        files: [file],
+                                        text: currentMessage,
+                                      });
+                                    }
+                                  } catch (err) {
+                                    console.error("Share failed", err);
+                                  }
+                                }
+
+                                let cleanPhone = String(currentRecipient.phone || '').replace(/\D/g, '');
+                                if (cleanPhone.startsWith('0') && cleanPhone.length === 11) {
+                                  cleanPhone = cleanPhone.substring(1);
+                                }
+                                if (cleanPhone.length === 10) {
+                                  cleanPhone = '91' + cleanPhone;
+                                }
+
+                                const normalizedMessage = (currentMessage || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                                const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
+                                window.open(url, '_blank');
+
+                                fetch('/api/logs', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    module: activeModule,
+                                    recipient_name: currentRecipient.name,
+                                    recipient_phone: currentRecipient.phone,
+                                    message: currentMessage,
+                                    status: 'Sent',
+                                    action_type: selectedMedia ? 'Share' : 'Send',
+                                    media_name: selectedMedia?.name || null
+                                  })
+                                }).catch(e => {});
+
+                                if (activeQueueIndex < multiSelectedRecipients.length - 1) {
+                                  setActiveQueueIndex(activeQueueIndex + 1);
+                                } else {
+                                  toast.success("Successfully completed entire wishing queue!");
+                                  setMultiSelectedRecipients([]);
+                                  setActiveQueueIndex(null);
+                                  setDirectMessage(prev => ({ ...prev, phone: '', name: '' }));
+                                  setDirectMessageStatus('');
+                                }
+                              }}
+                              className="text-xs font-bold h-11 bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-1.5 rounded-xl cursor-pointer"
+                            >
+                              <Send size={14} />
+                              <span>Send to {currentRecipient.name.split(' ')[0]}</span>
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <>
+                      <Button 
+                        variant="secondary"
+                        onClick={async () => {
+                          if(!directMessage.message) return toast.error("Please enter a message");
+                          const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
+                          
+                          if (selectedMedia && navigator.share) {
+                            try {
+                               const response = await fetch(selectedMedia.data);
+                               const blob = await response.blob();
+                               const file = new File([blob], selectedMedia.name, { type: selectedMedia.type });
+                               if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                                 await navigator.share({
+                                   files: [file],
+                                   text: directMessage.message,
+                                 });
+                                 return;
+                               }
+                            } catch (err) {
+                               console.error("Share failed", err);
+                            }
+                          }
+                          
+                          const normalizedDirect = (directMessage.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                          const url = `https://wa.me/?text=${encodeURIComponent(normalizedDirect)}`;
+                          window.open(url, '_blank');
+                        }}
+                        className="w-full py-3 flex items-center justify-center gap-2 mb-2"
+                      >
+                        <Share size={18} />
+                        Share Message
+                      </Button>
+                      <Button 
+                        onClick={() => {
+                          if(!directMessage.phone || !directMessage.message) return toast.error("Please fill all fields");
+                          sendWhatsApp(directMessage.phone, directMessage.message, directMessage.name || "Direct Message");
+                        }}
+                        className="w-full py-3 flex items-center justify-center gap-2"
+                      >
+                        <Send size={18} />
+                        Send Message
+                      </Button>
+                    </>
+                  )}
                 </div>
               </Card>
 
@@ -4596,12 +4950,12 @@ export default function App() {
 
                         return filteredReportEntries.map((entry) => {
                           const isDuplicate = reportPhoneCount[entry.phone] > 1;
-                          const addr = extractAddressComponents(entry);
-                          const dispVillage = entry.village || addr.village || '-';
-                          const dispBlock = (entry.block && !entry.block.includes(',') && !entry.block.includes('VILL-')) ? entry.block : (addr.block || '-');
-                          const dispDistrict = entry.district || addr.district || '-';
-                          const dispPost = (entry as HospitalEntry).post || addr.post || '-';
-                          const dispPincode = entry.pincode || addr.pincode || '-';
+                          const geo = resolveGeographicNames(entry);
+                          const dispVillage = geo.village;
+                          const dispBlock = geo.block;
+                          const dispDistrict = geo.district;
+                          const dispPost = geo.post;
+                          const dispPincode = geo.pincode;
 
                           return (
                             <tr key={entry.id} className={`hover:bg-zinc-50/50 transition-all group ${isDuplicate ? 'bg-amber-50/30' : ''}`}>
@@ -5356,46 +5710,51 @@ export default function App() {
                        <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">
                          {activeModule === 'Dairy' ? 'Farmer Details' : 'Patient Details'}
                        </th>
-                       {activeModule === 'Dairy' && (
-                         <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Age</th>
-                       )}
-                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Full Address (V-P-B-D-S-PIN)</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">Age</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">State</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Father / Husband</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Village</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Block</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                         {activeModule === 'Dairy' ? 'BMC / DPMC' : 'Department'}
+                       </th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">District</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Post</th>
+                       <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Pincode</th>
                        <th className="px-6 py-4 text-xs font-bold text-zinc-400 uppercase tracking-wider">
                          {activeModule === 'Dairy' ? 'Remarks' : 'Doctor'}
                        </th>
                      </tr>
                    </thead>
                    <tbody className="divide-y divide-zinc-100">
-                     {filteredReportEntries.map((entry, idx) => (
+                     {filteredReportEntries.map((entry, idx) => {
+                       const geo = resolveGeographicNames(entry);
+                       return (
                        <tr key={entry.id} className="hover:bg-zinc-50/50">
                          <td className="px-6 py-4 text-sm font-mono text-zinc-400">#{idx + 1001}</td>
                          <td className="px-6 py-4">
                            <p className="text-sm font-bold text-zinc-900">{entry.name}</p>
                            <p className="text-xs text-zinc-500 font-mono">{entry.phone}</p>
                          </td>
-                         {activeModule === 'Dairy' && (
-                           <td className="px-6 py-4 text-sm text-zinc-600">{entry.age}</td>
-                         )}
-                         <td className="px-6 py-4 text-sm text-zinc-600">
-                           {(() => {
-                               const addr = extractAddressComponents(entry);
-                              const dispVillage = entry.village || addr.village || '-';
-                              const dispBlock = (entry.block && !entry.block.includes(',') && !entry.block.includes('VILL-')) ? entry.block : (addr.block || '-');
-                              const dispDistrict = entry.district || addr.district || '-';
-                              const dispPost = (entry as HospitalEntry).post || addr.post || '-';
-                              const dispPincode = entry.pincode || addr.pincode || '-';
-                              const dispState = entry.state || addr.state || '-';
-                              return `${dispVillage} - ${dispPost} - ${dispBlock} - ${dispDistrict} - ${dispState} - ${dispPincode}`;
-                             })()}
+                         <td className="px-6 py-4 text-sm text-zinc-600">{entry.age || '-'}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.state}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{(entry as any).father_husband || "-"}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.village}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.block}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">
+                           {activeModule === "Dairy" ? ((entry as any).bmc_dpmc || "-") : ((entry as any).department || "-")}
                          </td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.district}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.post}</td>
+                         <td className="px-6 py-4 text-sm text-zinc-600 whitespace-nowrap">{geo.pincode}</td>
                          <td className="px-6 py-4 text-sm text-zinc-600">
                            {activeModule === 'Dairy' ? 'Verified' : (entry as HospitalEntry).doctor || '-'}
                          </td>
                        </tr>
-                     ))}
+                     ); })}
                      {filteredReportEntries.length === 0 && (
                        <tr>
-                         <td colSpan={6} className="px-6 py-12 text-center text-zinc-400">
+                         <td colSpan={12} className="px-6 py-12 text-center text-zinc-400">
                            No records found matching the filters.
                          </td>
                        </tr>
@@ -7070,7 +7429,7 @@ Example format:
                   Dismiss
                 </button>
                 <a
-                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent(attachmentGuide.message)}`}
+                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setAttachmentGuide(null)}
@@ -7334,7 +7693,7 @@ Example format:
                 {/* Real-time Dynamic Preview */}
                 <div className="bg-emerald-50/40 border border-emerald-100 p-4 rounded-2xl space-y-1">
                   <span className="text-[10px] font-extrabold text-emerald-800 uppercase tracking-widest block">Live Message Preview:</span>
-                  <div className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic break-words">
+                  <div className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic break-words whitespace-pre-wrap">
                     {bulkCampaignTemplate ? (
                       bulkCampaignTemplate.replace('{{name}}', 
                         (activeModule === 'Hospital' ? hospitalEntries : dairyEntries).find(entry => selectedEntryIds.includes(entry.id))?.name || 'Customer'

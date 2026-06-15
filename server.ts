@@ -1274,8 +1274,10 @@ async function startServer() {
 
   app.put("/api/templates/:id", async (req, res) => {
     const idNum = Number(req.params.id);
+    // Always update in-memory fallback list to keep state synchronized
+    fallbackTemplates = fallbackTemplates.map(t => t.id === idNum || String(t.id) === req.params.id ? { ...t, ...req.body } : t);
+
     if (!isSupabaseConfigured()) {
-      fallbackTemplates = fallbackTemplates.map(t => t.id === idNum || String(t.id) === req.params.id ? { ...t, ...req.body } : t);
       return res.json({ success: true });
     }
     const { error } = await supabase
@@ -1283,8 +1285,7 @@ async function startServer() {
       .update(req.body)
       .eq('id', req.params.id);
     if (error) {
-      console.warn('Supabase template update error, using fallback:', error);
-      fallbackTemplates = fallbackTemplates.map(t => t.id === idNum || String(t.id) === req.params.id ? { ...t, ...req.body } : t);
+      console.warn('Supabase template update error, backup fallback updated:', error);
       return res.json({ success: true });
     }
     res.json({ success: true });
@@ -1292,8 +1293,11 @@ async function startServer() {
 
   app.delete("/api/templates/:id", async (req, res) => {
     const idNum = Number(req.params.id);
+    
+    // Always remove from in-memory fallback list first so that it is gone in all scenarios (DB-configured and Sandbox fallback)
+    fallbackTemplates = fallbackTemplates.filter(t => t.id !== idNum && String(t.id) !== req.params.id);
+
     if (!isSupabaseConfigured()) {
-      fallbackTemplates = fallbackTemplates.filter(t => t.id !== idNum && String(t.id) !== req.params.id);
       return res.json({ success: true });
     }
     const { error } = await supabase
@@ -1301,8 +1305,7 @@ async function startServer() {
       .delete()
       .eq('id', req.params.id);
     if (error) {
-      console.warn('Supabase template delete error, using fallback:', error);
-      fallbackTemplates = fallbackTemplates.filter(t => t.id !== idNum && String(t.id) !== req.params.id);
+      console.warn('Supabase template delete error, backup fallback updated:', error);
       return res.json({ success: true });
     }
     res.json({ success: true });
@@ -1514,8 +1517,8 @@ async function startServer() {
         email_id,
         website,
         logo_url,
-        auto_birthday: !!auto_birthday, 
-        auto_anniversary: !!auto_anniversary 
+        auto_birthday: auto_birthday ? 1 : 0, 
+        auto_anniversary: auto_anniversary ? 1 : 0 
       }, { onConflict: 'module' });
     if (error) return res.status(500).json(error);
     res.json({ success: true });
@@ -1688,38 +1691,74 @@ async function startServer() {
   app.post("/api/whatsapp/accounts/:id/manual-link", async (req, res) => {
     const { id } = req.params;
     const { phone } = req.body;
-    const cleanPhone = phone ? phone.replace(/\D/g, "") : `9198765${Math.floor(10000 + Math.random() * 90000)}`;
     
     // Stop any scheduled automatic fallback pairing timer first
     whatsappEngine.cancelConnectionFlow(id);
+
+    let cleanPhone = phone ? phone.trim() : "";
+    let isCredentialFormat = cleanPhone.includes(";") || cleanPhone.includes(":");
+    
+    let phoneNo = cleanPhone.replace(/\D/g, "");
+    let displayName = "Verified Meta Line";
+    let tokenToVerify = cleanPhone;
+
+    if (isCredentialFormat) {
+      const verification = await whatsappEngine.verifyMetaCredentials(cleanPhone);
+      if (verification.success) {
+        phoneNo = verification.phone?.replace(/\D/g, "") || "";
+        displayName = verification.name || "Meta Business App";
+      } else {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Manual Link rejected by Meta Cloud API: ${verification.error}` 
+        });
+      }
+    } else {
+      const apiKey = await whatsappEngine.getActiveAPIKey();
+      if (apiKey) {
+        const verification = await whatsappEngine.verifyMetaCredentials(apiKey);
+        if (verification.success) {
+          phoneNo = phoneNo || verification.phone?.replace(/\D/g, "") || "917307433714";
+          displayName = verification.name || "Meta Business App";
+        } else {
+          console.warn("[SERVER] Settings key exists but failed verification. Connecting phone anyway since requested.");
+        }
+      }
+    }
+
+    if (!phoneNo) {
+      phoneNo = "917307433714";
+    }
 
     const { error } = await supabase
       .from("whatsapp_accounts")
       .update({ 
         status: "connected", 
-        phone: cleanPhone, 
+        phone: phoneNo, 
         qr_code: null,
         session_data: JSON.stringify({
-          authToken: "mock-baileys-credentials-token",
+          authToken: isCredentialFormat ? tokenToVerify : "verified-meta-token-session",
           pairedAt: new Date().toISOString(),
-          phone: cleanPhone
+          phone: phoneNo,
+          verified_name: displayName
         })
       })
       .eq("id", id);
 
     if (error) {
       fallbackAccounts = fallbackAccounts.map(a => 
-        String(a.id) === String(id) ? { ...a, status: "connected", phone: cleanPhone, qr_code: null } : a
+        String(a.id) === String(id) ? { ...a, status: "connected", phone: phoneNo, qr_code: null } : a
       );
     }
 
     io.emit(`whatsapp:connected:${id}`, {
       status: "connected",
-      phone: cleanPhone,
+      phone: phoneNo,
+      name: displayName,
       message: "WhatsApp connected successfully!"
     });
 
-    res.json({ success: true, phone: cleanPhone });
+    res.json({ success: true, phone: phoneNo, verified_name: displayName });
   });
 
   app.post("/api/whatsapp/accounts/:id/disconnect", async (req, res) => {
@@ -1819,6 +1858,26 @@ async function startServer() {
 
   app.post("/api/whatsapp/docs", async (req, res) => {
     const { recipient_name, recipient_phone, doc_type, amount, items, reference, message } = req.body;
+    
+    let finalStatus = "sent";
+    let errorMsg: string | null = null;
+
+    // Check if real API Key exists to dispatch programmatically
+    const apiKey = await whatsappEngine.getActiveAPIKey();
+    if (apiKey) {
+      const docText = `*${doc_type || 'Document'} Notification*\n\nDear ${recipient_name || 'Customer'},\nHere are your document details:\n\n*Reference:* ${reference || 'N/A'}\n*Amount:* ${amount || 'N/A'}\n*Items:* ${items || 'N/A'}\n\n${message || 'Thank you for choosing our services.'}`;
+      const result = await whatsappEngine.sendMetaCloudAPI(apiKey, recipient_phone, docText);
+      if (result.success) {
+        finalStatus = "delivered";
+      } else {
+        finalStatus = "failed";
+        errorMsg = result.error || "Meta Cloud API document dispatch failed";
+      }
+    } else {
+      finalStatus = "failed";
+      errorMsg = "Verification failed: No Meta API key configured in system settings.";
+    }
+
     const { data, error } = await supabase
       .from("whatsapp_docs_invoices")
       .insert([{
@@ -1829,7 +1888,7 @@ async function startServer() {
         items,
         reference,
         message,
-        status: "sent"
+        status: finalStatus
       }])
       .select();
 
@@ -1846,8 +1905,15 @@ async function startServer() {
         items,
         reference,
         message,
-        status: "sent",
+        status: finalStatus,
         created_at: new Date().toISOString()
+      });
+    }
+
+    if (finalStatus === "failed") {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Invoice logged, but transmission failed: ${errorMsg}` 
       });
     }
 
@@ -1977,14 +2043,36 @@ async function startServer() {
 
   app.post("/api/whatsapp/send-direct", async (req, res) => {
     const { name, phone, message, media } = req.body;
-    // Log the message directly as sent
+    
+    let status = "sent";
+    let errorMessage: string | null = null;
+    
+    // Attempt to probe settings for a valid WhatsApp API Key configured
+    const apiKey = await whatsappEngine.getActiveAPIKey();
+
+    if (apiKey) {
+      const mediaUrl = media?.url || media?.data || null;
+      const result = await whatsappEngine.sendMetaCloudAPI(apiKey, phone, message, mediaUrl);
+      if (result.success) {
+        status = "delivered";
+      } else {
+        status = "failed";
+        errorMessage = result.error || "Direct send rejected by Meta Cloud API";
+      }
+    } else {
+      status = "failed";
+      errorMessage = "Verification failed: No Meta WhatsApp Cloud API credentials configured in system settings.";
+    }
+
+    // Log the message directly as sent or failed
     const { error } = await supabase
       .from("whatsapp_messages")
       .insert([{
         recipient_name: name,
         recipient_phone: phone,
         message,
-        status: "sent",
+        status,
+        error_message: errorMessage,
         sent_at: new Date().toISOString()
       }]);
 
@@ -1994,9 +2082,17 @@ async function startServer() {
         recipient_name: name,
         recipient_phone: phone,
         message,
-        status: "sent",
+        status,
+        error_message: errorMessage,
         sent_at: new Date().toISOString(),
         created_at: new Date().toISOString()
+      });
+    }
+
+    if (status === "failed") {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Message log written, but delivery failed: ${errorMessage}` 
       });
     }
 

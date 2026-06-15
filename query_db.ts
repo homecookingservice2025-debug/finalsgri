@@ -24,6 +24,10 @@ async function run() {
   const { data: dairy, error: dairyErr } = await supabase.from('dairy_entries').select('*').limit(5);
   console.log("DAIRY ENTRIES:");
   console.log(JSON.stringify(dairy, null, 2));
+
+  const { data: settings, error: settingsErr } = await supabase.from('settings').select('*');
+  console.log("SETTINGS:");
+  console.log(JSON.stringify(settings, null, 2), settingsErr);
 }
 
 run();

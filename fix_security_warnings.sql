@@ -1,5 +1,5 @@
 -- COMPREHENSIVE SECURITY FIX FOR SHRI KRISHNA MANAGEMENT SYSTEM
--- This script fixes all 13 Dashboard warnings (11 RLS + 2 SECURITY DEFINER).
+-- This script fixes all 18 Dashboard warnings (16 RLS + 2 SECURITY DEFINER).
 -- Run this in your Supabase SQL Editor.
 
 BEGIN;
@@ -22,7 +22,8 @@ DECLARE
     tables TEXT[] := ARRAY[
         'block_master', 'dairy_entries', 'district_master', 'hospital_entries', 
         'media', 'message_logs', 'post_master', 'settings', 
-        'staff_accounts', 'state_master', 'templates'
+        'staff_accounts', 'state_master', 'templates', 'village_master',
+        'whatsapp_accounts', 'whatsapp_campaigns', 'whatsapp_messages', 'whatsapp_docs_invoices'
     ];
 BEGIN
     -- First, remove ALL current policies to avoid duplicates/errors

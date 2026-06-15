@@ -5,6 +5,7 @@ let bootError: any = null;
 
 try {
   // Retrieve 'app' from our pre-compiled production bundle which resolves all relative dependencies
+  // @ts-ignore
   const serverModule = await import("../dist/server.cjs");
   app = serverModule.app;
   console.log("[BOOT] Vercel Serverless Function loaded server.cjs bundle successfully.");

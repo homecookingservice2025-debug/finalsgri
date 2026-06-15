@@ -1136,7 +1136,8 @@ export default function WhatsAppCRM({
         if (cleanPhone.length === 10) {
           cleanPhone = "91" + cleanPhone;
         }
-        const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(finalMessage)}`;
+        const normalizedMessage = (finalMessage || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
 
         if (selectedMediaForDirect) {
           // Open the beautiful attachment guide overlay!
@@ -1348,7 +1349,7 @@ export default function WhatsAppCRM({
                   Dismiss
                 </button>
                 <a
-                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent(attachmentGuide.message)}`}
+                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setAttachmentGuide(null)}
@@ -1895,7 +1896,7 @@ export default function WhatsAppCRM({
                   <Sparkles size={11} className="text-emerald-500 animate-pulse" />
                   Live Campaign Preview (Autofetched Personalization)
                 </span>
-                <div className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic break-words">
+                <div className="text-xs text-zinc-700 leading-relaxed font-sans font-medium italic break-words whitespace-pre-wrap">
                   {campaignTemplate ? (
                     (() => {
                       const sampleContact = campaignContacts[0] || (hospitalEntries && hospitalEntries[0]) || (dairyEntries && dairyEntries[0]) || { name: "Valued Client" };
@@ -2666,7 +2667,7 @@ export default function WhatsAppCRM({
                       )}
 
                       {/* Msg Caption */}
-                      <div className="p-2 text-xs text-zinc-700 leading-relaxed font-sans mt-0.5">
+                      <div className="p-2 text-xs text-zinc-700 leading-relaxed font-sans mt-0.5 whitespace-pre-wrap">
                         <p className="font-semibold text-emerald-800 text-[10px] mb-0.5 flex items-center gap-0.5">
                           <Sparkles size={10} className="text-amber-500" />
                           🎉 Celebration Delivery:
@@ -2884,7 +2885,8 @@ export default function WhatsAppCRM({
                           if (cleanPhone.length === 10) {
                             cleanPhone = "91" + cleanPhone;
                           }
-                          const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(log.message)}`;
+                          const normalizedMessage = (log.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                          const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
                           const newWindow = window.open(url, '_blank');
                           if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
                             setBlockedPopupUrl(url);
