@@ -2292,16 +2292,14 @@ export default function App() {
       .replace(/\r/g, '\n');
     const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
 
-    if (selectedMedia) {
-      try {
-        await navigator.clipboard.writeText(cleanMessage);
-        toast.success("Message copied to clipboard!");
-      } catch (err) {
-        // Fallback
-      }
+    try {
+      await navigator.clipboard.writeText(cleanMessage);
+      toast.success("📋 Message copied to clipboard! If you face issues, just Paste (Ctrl+V) on WhatsApp.", { duration: 5000 });
+    } catch (err) {
+      // Fallback
     }
 
-    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(cleanMessage)}`;
+    const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(cleanMessage)}`;
 
     if (selectedMedia) {
       // Open the beautiful attachment guide overlay in App.tsx!
@@ -4499,7 +4497,7 @@ export default function App() {
                                 }
 
                                 const normalizedMessage = (currentMessage || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                                const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
+                                const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(normalizedMessage)}`;
                                 window.open(url, '_blank');
 
                                 fetch('/api/logs', {
@@ -4561,7 +4559,7 @@ export default function App() {
                           }
                           
                           const normalizedDirect = (directMessage.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                          const url = `https://wa.me/?text=${encodeURIComponent(normalizedDirect)}`;
+                          const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(normalizedDirect)}`;
                           window.open(url, '_blank');
                         }}
                         className="w-full py-3 flex items-center justify-center gap-2 mb-2"
@@ -7439,7 +7437,7 @@ Example format:
                   Dismiss
                 </button>
                 <a
-                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
+                  href={`https://api.whatsapp.com/send?phone=${attachmentGuide.phone}&text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setAttachmentGuide(null)}
@@ -7818,7 +7816,7 @@ Example format:
                   <X size={20} />
                 </button>
               </div>
-              <form onSubmit={handleAddTemplate} className="p-6 space-y-4">
+              <form key={editingTemplate ? editingTemplate.id : 'new'} onSubmit={handleAddTemplate} className="p-6 space-y-4">
                 <Input 
                   label="Template Name" 
                   name="name" 
