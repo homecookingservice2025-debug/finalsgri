@@ -2106,7 +2106,7 @@ export default function App() {
         const bdayTemplate = templates.find(t => t.type === 'Birthday');
         if (bdayTemplate) {
           autoTemplateId = String(bdayTemplate.id);
-          autoMessage = bdayTemplate.content.replace(/\{\{[^}]+\}\}/g, detectedName);
+          autoMessage = bdayTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, detectedName);
           autoStatus = `🎉 ${detectedName} has a birthday today! Auto-selected Birthday template.`;
           toast.success(`Birthday detected for ${detectedName}! Auto-selected template.`);
         } else {
@@ -2116,7 +2116,7 @@ export default function App() {
         const annivTemplate = templates.find(t => t.type === 'Anniversary');
         if (annivTemplate) {
           autoTemplateId = String(annivTemplate.id);
-          autoMessage = annivTemplate.content.replace(/\{\{[^}]+\}\}/g, detectedName);
+          autoMessage = annivTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, detectedName);
           autoStatus = `💍 ${detectedName} has an anniversary today! Auto-selected Anniversary template.`;
           toast.success(`Anniversary detected for ${detectedName}! Auto-selected template.`);
         } else {
@@ -2150,7 +2150,7 @@ export default function App() {
       const bdayTemplate = templates.find(t => t.type === 'Birthday');
       if (bdayTemplate) {
         autoTemplateId = String(bdayTemplate.id);
-        autoMessage = bdayTemplate.content.replace(/\{\{[^}]+\}\}/g, nameVal);
+        autoMessage = bdayTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, nameVal);
         autoStatus = `🎉 ${nameVal} has a birthday today! Auto-selected Birthday template.`;
         toast.success(`Today is ${nameVal}'s Birthday! Custom greeting applied.`);
       } else {
@@ -2160,7 +2160,7 @@ export default function App() {
       const annivTemplate = templates.find(t => t.type === 'Anniversary');
       if (annivTemplate) {
         autoTemplateId = String(annivTemplate.id);
-        autoMessage = annivTemplate.content.replace(/\{\{[^}]+\}\}/g, nameVal);
+        autoMessage = annivTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, nameVal);
         autoStatus = `💍 ${nameVal} has an anniversary today! Auto-selected Anniversary template.`;
         toast.success(`Today is ${nameVal}'s Anniversary! Custom celebration applied.`);
       } else {
@@ -2200,14 +2200,14 @@ export default function App() {
         const bdayTemplate = templates.find(t => t.type === 'Birthday');
         if (bdayTemplate) {
           autoTemplateId = String(bdayTemplate.id);
-          autoMessage = bdayTemplate.content.replace(/\{\{[^}]+\}\}/g, match.name || '');
+          autoMessage = bdayTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, match.name || '');
           autoStatus = `🎉 ${match.name} has a birthday today! Auto-selected Birthday template.`;
         }
       } else if (isAnniv) {
         const annivTemplate = templates.find(t => t.type === 'Anniversary');
         if (annivTemplate) {
           autoTemplateId = String(annivTemplate.id);
-          autoMessage = annivTemplate.content.replace(/\{\{[^}]+\}\}/g, match.name || '');
+          autoMessage = annivTemplate.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, match.name || '');
           autoStatus = `💍 ${match.name} has an anniversary today! Auto-selected Anniversary template.`;
         }
       } else {
@@ -2287,9 +2287,10 @@ export default function App() {
       cleanPhone = '91' + cleanPhone;
     }
     const cleanMessage = (message || '')
-      .replace(/\{\{name\}\}/gi, name || 'Customer')
+      .replace(/\{\s*\{\s*name\s*\}\s*\}/gi, name || 'Customer')
       .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n');
+      .replace(/\r/g, '\n')
+      .replace(/\n/g, '\r\n');
     const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
 
     try {
@@ -2299,7 +2300,7 @@ export default function App() {
       // Fallback
     }
 
-    const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(cleanMessage)}`;
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(cleanMessage)}`;
 
     if (selectedMedia) {
       // Open the beautiful attachment guide overlay in App.tsx!
@@ -4304,7 +4305,7 @@ export default function App() {
                       setDirectMessage({ 
                         ...directMessage, 
                         templateId: e.target.value,
-                        message: t ? (multiSelectedRecipients.length > 0 ? t.content : t.content.replace(/\{\{[^}]+\}\}/g, placeholderName)) : directMessage.message
+                        message: t ? (multiSelectedRecipients.length > 0 ? t.content : t.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, placeholderName)) : directMessage.message
                       });
                     }}
                     options={[{ value: '', label: 'None' }, ...templates.map(t => ({ value: t.id, label: t.name }))]} 
@@ -4391,7 +4392,7 @@ export default function App() {
                   {multiSelectedRecipients.length > 0 && activeQueueIndex !== null && activeQueueIndex < multiSelectedRecipients.length ? (
                     (() => {
                       const currentRecipient = multiSelectedRecipients[activeQueueIndex];
-                      const currentMessage = directMessage.message.replace(/\{\{name\}\}/gi, currentRecipient.name || 'Customer');
+                      const currentMessage = directMessage.message.replace(/\{\s*\{\s*name\s*\}\s*\}/gi, currentRecipient.name || 'Customer');
                       const selectedMedia = mediaItems.find(m => m.id === selectedMediaId);
 
                       return (
@@ -4496,8 +4497,11 @@ export default function App() {
                                   cleanPhone = '91' + cleanPhone;
                                 }
 
-                                const normalizedMessage = (currentMessage || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                                const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(normalizedMessage)}`;
+                                const normalizedMessage = (currentMessage || '')
+                                  .replace(/\r\n/g, '\n')
+                                  .replace(/\r/g, '\n')
+                                  .replace(/\n/g, '\r\n');
+                                const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
                                 window.open(url, '_blank');
 
                                 fetch('/api/logs', {
@@ -4558,8 +4562,11 @@ export default function App() {
                             }
                           }
                           
-                          const normalizedDirect = (directMessage.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                          const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(normalizedDirect)}`;
+                          const normalizedDirect = (directMessage.message || '')
+                            .replace(/\r\n/g, '\n')
+                            .replace(/\r/g, '\n')
+                            .replace(/\n/g, '\r\n');
+                          const url = `https://wa.me/?text=${encodeURIComponent(normalizedDirect)}`;
                           window.open(url, '_blank');
                         }}
                         className="w-full py-3 flex items-center justify-center gap-2 mb-2"
@@ -7248,14 +7255,14 @@ Example format:
                       <button
                         key={t.id}
                         onClick={() => {
-                          const msg = t.content.replace(/\{\{[^}]+\}\}/g, showTemplatePicker.name);
+                          const msg = t.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, showTemplatePicker.name);
                           sendWhatsApp(showTemplatePicker.phone, msg, showTemplatePicker.name);
                           setShowTemplatePicker(null);
                         }}
                         className="text-left p-4 border border-zinc-100 rounded-xl hover:border-zinc-900 hover:bg-zinc-50 transition-all group"
                       >
                         <p className="text-xs font-bold text-zinc-400 mb-1">{t.name}</p>
-                        <p className="text-sm text-zinc-600 line-clamp-2">{t.content.replace(/\{\{[^}]+\}\}/g, showTemplatePicker.name)}</p>
+                        <p className="text-sm text-zinc-600 line-clamp-2">{t.content.replace(/\{\s*\{\s*[^}]+\s*\}\s*\}/g, showTemplatePicker.name)}</p>
                       </button>
                     ))}
                 </div>
@@ -7437,7 +7444,7 @@ Example format:
                   Dismiss
                 </button>
                 <a
-                  href={`https://api.whatsapp.com/send?phone=${attachmentGuide.phone}&text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
+                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setAttachmentGuide(null)}
