@@ -434,7 +434,27 @@ export default function App() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
-  const [user, setUser] = useState<{ username: string; role: 'admin' | 'staff' } | null>(null);
+  const [user, setUser] = useState<{ username: string; role: 'admin' | 'staff' } | null>(() => {
+    try {
+      const saved = localStorage.getItem('enterprise-manager-user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.warn("Failed to load saved user session:", e);
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (user) {
+        localStorage.setItem('enterprise-manager-user', JSON.stringify(user));
+      } else {
+        localStorage.removeItem('enterprise-manager-user');
+      }
+    } catch (e) {
+      console.warn("Failed to sync user session to localStorage:", e);
+    }
+  }, [user]);
   
   // Real-time backend connectivity diagnostic check
   const [dbStatus, setDbStatus] = useState<{

@@ -1136,7 +1136,10 @@ export default function WhatsAppCRM({
         if (cleanPhone.length === 10) {
           cleanPhone = "91" + cleanPhone;
         }
-        const normalizedMessage = (finalMessage || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const normalizedMessage = (finalMessage || '')
+          .replace(/\r\n/g, '\n')
+          .replace(/\r/g, '\n')
+          .replace(/\n/g, '\r\n');
         const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
 
         if (selectedMediaForDirect) {
@@ -1349,7 +1352,7 @@ export default function WhatsAppCRM({
                   Dismiss
                 </button>
                 <a
-                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'))}`}
+                  href={`https://wa.me/${attachmentGuide.phone}?text=${encodeURIComponent((attachmentGuide.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n'))}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setAttachmentGuide(null)}
@@ -2885,7 +2888,10 @@ export default function WhatsAppCRM({
                           if (cleanPhone.length === 10) {
                             cleanPhone = "91" + cleanPhone;
                           }
-                          const normalizedMessage = (log.message || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                          const normalizedMessage = (log.message || '')
+                            .replace(/\r\n/g, '\n')
+                            .replace(/\r/g, '\n')
+                            .replace(/\n/g, '\r\n');
                           const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(normalizedMessage)}`;
                           const newWindow = window.open(url, '_blank');
                           if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
